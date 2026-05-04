@@ -1,0 +1,33 @@
+# Local assistant / workspace metadata
+.codex
+
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+ENV/
+
+# Project docs and generated experiment outputs
+doc/
+artifacts/
+runs/
+*.log
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
