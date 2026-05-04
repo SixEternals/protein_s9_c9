@@ -12,13 +12,14 @@ from typing import Any, Sequence
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, average_precision_score, roc_auc_score
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from encoders.c9_encoder import C9Encoder
 from encoders.r9_encoder import R9Encoder
-from models.conmismatch9_torch import ConMismatch9TorchConfig, ConMismatch9TorchModel
+from models.conmismatch9_torch import ConMismatch9TorchConfig, ConMismatch9TorchModel, ResidualAuxiliaryFusionHead
 from models.deepfocus_torch import DeepFocusTorchConfig, DeepFocusTorchModel
 from utils.config import load_config, resolve_dataset_files
 
@@ -411,6 +412,8 @@ def build_model(config: dict[str, Any]) -> tuple[str, str, nn.Module, dict[str, 
             attn_layers=attn_layers,
             run_base_width=int(training.get("run_base_width", 2)),
             run_state_width=int(training.get("run_state_width", 2)),
+            aux_init_scale=float(training.get("aux_init_scale", 0.0)),
+            aux_max_scale=float(training.get("aux_max_scale", 0.50)),
             ablation_mode=ablation_mode,
         )
         return model_name, "c9", ConMismatch9TorchModel(model_config), asdict(model_config)
@@ -427,6 +430,57 @@ def build_model(config: dict[str, Any]) -> tuple[str, str, nn.Module, dict[str, 
     raise ValueError(f"unsupported model: {model_name}")
 
 
+def _checkpoint_payload(weights_path: str | Path) -> dict[str, Any]:
+    payload = torch.load(weights_path, map_location="cpu")
+    if not isinstance(payload, dict):
+        raise ValueError(f"unsupported checkpoint payload: {type(payload)!r}")
+    return payload
+
+
+def _normalize_conmismatch9_checkpoint(payload: dict[str, Any]) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    model_name = str(payload.get("model_name", "conmismatch9")).lower()
+    encoder_name = str(payload.get("encoder_name", "c9")).lower()
+    model_config = dict(payload.get("model_config", {}))
+    state_dict = payload.get("model_state_dict", payload)
+    if not isinstance(state_dict, dict):
+        raise ValueError("checkpoint does not contain a model_state_dict")
+
+    ablation_mode = str(model_config.get("ablation_mode", "full")).lower().replace("-", "_")
+    if model_name == "conmismatch9" and ablation_mode == "full":
+        legacy_prefixes = (
+            "fusion.gate.",
+            "fusion.pool_projection.",
+            "fusion.head.",
+            "fusion.cnn_norm.",
+            "fusion.run_norm.",
+        )
+        if any(any(key.startswith(prefix) for prefix in legacy_prefixes) for key in state_dict.keys()):
+            model_config["ablation_mode"] = "legacy_full"
+
+    return model_name, encoder_name, model_config, state_dict
+
+
+def _instantiate_model_from_payload(payload: dict[str, Any]) -> tuple[str, str, nn.Module]:
+    model_name, encoder_name, model_config, state_dict = _normalize_conmismatch9_checkpoint(payload)
+
+    if model_name == "deepfocus":
+        model = DeepFocusTorchModel(DeepFocusTorchConfig(**model_config))
+    elif model_name == "conmismatch9":
+        model = ConMismatch9TorchModel(ConMismatch9TorchConfig(**model_config))
+    else:
+        raise ValueError(f"unknown torch model in checkpoint: {model_name}")
+
+    model.load_state_dict(state_dict)
+    return model_name, encoder_name, model
+
+
+def _set_module_requires_grad(module: nn.Module | None, requires_grad: bool) -> None:
+    if module is None:
+        return
+    for parameter in module.parameters():
+        parameter.requires_grad = requires_grad
+
+
 def train(config: dict[str, Any]) -> dict[str, Any]:
     seed = int(config.get("seed", 42))
     set_seed(seed)
@@ -437,10 +491,37 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
     if encoder_name != expected_encoder:
         raise ValueError(f"{model_name} expects encoder {expected_encoder}, got {encoder_name}")
 
+    training = config.get("training", {})
+    warmstart_weights_path = str(config.get("warmstart_weights_path") or training.get("warmstart_weights_path") or "").strip()
+    teacher_weights_path = str(config.get("teacher_weights_path") or training.get("teacher_weights_path") or "").strip()
+    warmstart_freeze_epochs = int(training.get("warmstart_freeze_epochs", 0))
+    distill_alpha = float(training.get("distill_alpha", 0.0))
+    distill_temperature = float(training.get("distill_temperature", 2.0))
+    if distill_temperature <= 0.0:
+        raise ValueError("distill_temperature must be positive")
+
+    if warmstart_weights_path:
+        warmstart_payload = _checkpoint_payload(warmstart_weights_path)
+        warmstart_model_name, warmstart_encoder_name, warmstart_model = _instantiate_model_from_payload(warmstart_payload)
+        if model_name != "conmismatch9":
+            raise ValueError("warmstart is only supported for ConMismatch9 full training")
+        if warmstart_model_name != "conmismatch9" or warmstart_encoder_name != expected_encoder:
+            raise ValueError(
+                f"warmstart checkpoint expects model={warmstart_model_name} encoder={warmstart_encoder_name}, "
+                f"but current training uses model={model_name} encoder={expected_encoder}"
+            )
+        if not isinstance(model, ConMismatch9TorchModel) or not isinstance(warmstart_model, ConMismatch9TorchModel):
+            raise RuntimeError("warmstart requires ConMismatch9 torch models")
+        if model.ablation_mode != "full":
+            raise ValueError("warmstart is only supported when the student ablation_mode is full")
+        if warmstart_model.config.ablation_mode not in {"only_cnn", "full"}:
+            raise ValueError(
+                f"warmstart checkpoint must come from only_cnn/full, got {warmstart_model.config.ablation_mode!r}"
+            )
+        model.warmstart_main_path_from_checkpoint(warmstart_payload)
+
     features, labels, dataset_files, dataset_summaries = load_dataset(config)
     train_idx, val_idx, test_idx = split_indices(labels, seed)
-
-    training = config.get("training", {})
     batch_size = int(training.get("batch_size", 512))
     epochs = int(training.get("epochs", 30))
     learning_rate = float(training.get("learning_rate", 1e-3))
@@ -459,6 +540,34 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
     pos_weight_value = float(training.get("pos_weight") or (negatives / max(1.0, positives)))
 
     model = model.to(device)
+    if warmstart_weights_path:
+        print(f"warmstart_from={warmstart_weights_path}")
+
+    teacher_model: nn.Module | None = None
+    resolved_teacher_weights_path = ""
+    if distill_alpha > 0.0:
+        teacher_source = teacher_weights_path or warmstart_weights_path
+        if not teacher_source:
+            raise ValueError("distill_alpha > 0 requires teacher_weights_path or warmstart_weights_path")
+        resolved_teacher_weights_path = teacher_source
+        teacher_payload = _checkpoint_payload(teacher_source)
+        _, teacher_encoder_name, teacher_model_loaded = _instantiate_model_from_payload(teacher_payload)
+        if teacher_encoder_name != expected_encoder:
+            raise ValueError(
+                f"teacher checkpoint expects encoder {teacher_encoder_name}, but current training uses encoder {expected_encoder}"
+            )
+        teacher_model = teacher_model_loaded.to(device)
+        teacher_model.eval()
+        for parameter in teacher_model.parameters():
+            parameter.requires_grad = False
+        print(f"teacher_from={teacher_source} distill_alpha={distill_alpha:.4f} distill_temperature={distill_temperature:.2f}")
+
+    if warmstart_weights_path and warmstart_freeze_epochs > 0 and isinstance(model, ConMismatch9TorchModel):
+        if isinstance(model.fusion, ResidualAuxiliaryFusionHead):
+            _set_module_requires_grad(model.backbone, False)
+            _set_module_requires_grad(model.fusion.main_head, False)
+            print(f"freeze_main_epochs={warmstart_freeze_epochs}")
+
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight_value, device=device, dtype=torch.float32))
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=3)
@@ -478,6 +587,17 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
     )
 
     for epoch in range(1, epochs + 1):
+        if (
+            warmstart_weights_path
+            and warmstart_freeze_epochs > 0
+            and epoch == warmstart_freeze_epochs + 1
+            and isinstance(model, ConMismatch9TorchModel)
+            and isinstance(model.fusion, ResidualAuxiliaryFusionHead)
+        ):
+            _set_module_requires_grad(model.backbone, True)
+            _set_module_requires_grad(model.fusion.main_head, True)
+            print("unfreeze_main_path")
+
         model.train()
         train_loss_total = 0.0
         train_count = 0
@@ -488,6 +608,12 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
             with _autocast_context(device, use_amp):
                 logits = model(x)
                 loss = criterion(logits, y)
+                if teacher_model is not None and distill_alpha > 0.0:
+                    with torch.no_grad():
+                        teacher_logits = teacher_model(x)
+                    student_soft = torch.sigmoid(logits / distill_temperature)
+                    teacher_soft = torch.sigmoid(teacher_logits / distill_temperature)
+                    loss = loss + distill_alpha * F.mse_loss(student_soft, teacher_soft)
             if scaler is not None:
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -571,6 +697,11 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
         "best_val_aupr": float(best_val_aupr),
         "test_metrics": test_metrics,
         "model_config": model_config,
+        "warmstart_weights_path": warmstart_weights_path or None,
+        "teacher_weights_path": resolved_teacher_weights_path or None,
+        "warmstart_freeze_epochs": int(warmstart_freeze_epochs),
+        "distill_alpha": float(distill_alpha),
+        "distill_temperature": float(distill_temperature),
         "history": history,
         "weights_path": str(weights_path) if weights_path else None,
     }

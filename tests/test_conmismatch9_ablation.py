@@ -70,6 +70,41 @@ class ConMismatch9AblationTests(unittest.TestCase):
             y = model(x)
         self.assertEqual(tuple(y.shape), (2,))
 
+    def test_full_warmstart_matches_only_cnn(self):
+        torch.manual_seed(0)
+        only_cnn = ConMismatch9TorchModel(
+            ConMismatch9TorchConfig(
+                hidden_dim=16,
+                attn_heads=4,
+                attn_layers=1,
+                dropout=0.0,
+                ablation_mode="only_cnn",
+            )
+        )
+        full = ConMismatch9TorchModel(
+            ConMismatch9TorchConfig(
+                hidden_dim=16,
+                attn_heads=4,
+                attn_layers=1,
+                dropout=0.0,
+                ablation_mode="full",
+            )
+        )
+
+        full.warmstart_main_path_from_checkpoint({"model_state_dict": only_cnn.state_dict()})
+        self.assertIsInstance(full.fusion, ResidualAuxiliaryFusionHead)
+        mi_scale, run_scale = full.fusion.auxiliary_scales()
+        self.assertAlmostEqual(float(mi_scale.item()), 0.0, places=6)
+        self.assertAlmostEqual(float(run_scale.item()), 0.0, places=6)
+
+        x = torch.randn(2, 23, 9)
+        only_cnn.eval()
+        full.eval()
+        with torch.no_grad():
+            base_logits = only_cnn(x)
+            full_logits = full(x)
+        torch.testing.assert_close(full_logits, base_logits)
+
     def test_invalid_ablation_mode_fails_fast(self):
         with self.assertRaises(ValueError):
             ConMismatch9TorchModel(ConMismatch9TorchConfig(ablation_mode="bad_mode"))

@@ -15,6 +15,8 @@ class ConMismatch9TorchConfig:
     attn_layers: int = 2
     run_base_width: int = 2
     run_state_width: int = 2
+    aux_init_scale: float = 0.0
+    aux_max_scale: float = 0.50
     ablation_mode: str = "full"
 
 
@@ -256,7 +258,7 @@ class SingleBranchHead(nn.Module):
 class ResidualAuxiliaryFusionHead(nn.Module):
     """Keep the strong CNN path as the main logit and add weak MI/Run residuals."""
 
-    def __init__(self, hidden_dim: int, dropout: float, aux_init: float = 0.05, max_aux_scale: float = 0.50):
+    def __init__(self, hidden_dim: int, dropout: float, aux_init: float = 0.0, max_aux_scale: float = 0.50):
         super().__init__()
         if max_aux_scale <= 0.0:
             raise ValueError("max_aux_scale must be positive")
@@ -278,12 +280,22 @@ class ResidualAuxiliaryFusionHead(nn.Module):
         run_scale = self.max_aux_scale * torch.tanh(self.raw_run_scale)
         return mi_scale, run_scale
 
+    def reset_auxiliary_scales(self, value: float = 0.0) -> None:
+        raw_value = self._raw_scale_init(value, self.max_aux_scale)
+        with torch.no_grad():
+            self.raw_mi_scale.fill_(raw_value)
+            self.raw_run_scale.fill_(raw_value)
+
     def forward(self, backbone_features: torch.Tensor, mi_features: torch.Tensor, run_features: torch.Tensor) -> torch.Tensor:
         main_logit = self.main_head(backbone_features)
         mi_logit = self.mi_head(mi_features)
         run_logit = self.run_head(run_features)
         mi_scale, run_scale = self.auxiliary_scales()
         return main_logit + mi_scale * mi_logit + run_scale * run_logit
+
+
+def _prefixed_state_dict(state_dict: dict[str, torch.Tensor], prefix: str) -> dict[str, torch.Tensor]:
+    return {key[len(prefix) :]: value for key, value in state_dict.items() if key.startswith(prefix)}
 
 
 class ConMismatch9TorchModel(nn.Module):
@@ -325,7 +337,12 @@ class ConMismatch9TorchModel(nn.Module):
         )
         if self.use_run_attn:
             if self.use_residual_fusion:
-                self.fusion = ResidualAuxiliaryFusionHead(self.config.hidden_dim, self.config.dropout)
+                self.fusion = ResidualAuxiliaryFusionHead(
+                    self.config.hidden_dim,
+                    self.config.dropout,
+                    aux_init=self.config.aux_init_scale,
+                    max_aux_scale=self.config.aux_max_scale,
+                )
             elif not self.use_gated_fusion:
                 self.fusion = ConcatFusionHead(self.config.hidden_dim, self.config.dropout)
             elif self.ablation_mode in {"fusion_norm", "run_attn_no_mask_fusion_norm"}:
@@ -336,6 +353,29 @@ class ConMismatch9TorchModel(nn.Module):
         else:
             self.fusion = None
             self.single_head = SingleBranchHead(self.config.hidden_dim, self.config.dropout)
+
+    def warmstart_main_path(self, state_dict: dict[str, torch.Tensor]) -> None:
+        if not isinstance(self.fusion, ResidualAuxiliaryFusionHead):
+            raise ValueError("warmstart_main_path is only supported for residual full mode")
+
+        backbone_state = _prefixed_state_dict(state_dict, "backbone.")
+        main_head_state = _prefixed_state_dict(state_dict, "single_head.")
+        if not main_head_state:
+            main_head_state = _prefixed_state_dict(state_dict, "fusion.main_head.")
+        if not backbone_state:
+            raise ValueError("warmstart checkpoint does not contain a backbone state")
+        if not main_head_state:
+            raise ValueError("warmstart checkpoint does not contain a compatible main head state")
+
+        self.backbone.load_state_dict(backbone_state, strict=True)
+        self.fusion.main_head.load_state_dict(main_head_state, strict=True)
+        self.fusion.reset_auxiliary_scales(0.0)
+
+    def warmstart_main_path_from_checkpoint(self, checkpoint: dict[str, object]) -> None:
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        if not isinstance(state_dict, dict):
+            raise ValueError("warmstart checkpoint does not contain a state dict")
+        self.warmstart_main_path(state_dict)  # type: ignore[arg-type]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_split = [x[:, :, 0:4], x[:, :, 4:7], x[:, :, 7:9]]

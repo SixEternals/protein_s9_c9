@@ -29,6 +29,13 @@ DROPOUT="${DROPOUT:-0.20}"
 ATTN_HEADS="${ATTN_HEADS:-4}"
 ATTN_LAYERS="${ATTN_LAYERS:-2}"
 ABLATION_MODE="${ABLATION_MODE:-full}"
+WARMSTART_WEIGHTS_PATH="${WARMSTART_WEIGHTS_PATH:-}"
+TEACHER_WEIGHTS_PATH="${TEACHER_WEIGHTS_PATH:-}"
+WARMSTART_FREEZE_EPOCHS="${WARMSTART_FREEZE_EPOCHS:-0}"
+DISTILL_ALPHA="${DISTILL_ALPHA:-0.0}"
+DISTILL_TEMPERATURE="${DISTILL_TEMPERATURE:-2.0}"
+AUX_INIT_SCALE="${AUX_INIT_SCALE:-0.0}"
+AUX_MAX_SCALE="${AUX_MAX_SCALE:-0.50}"
 DRY_RUN=0
 AUTO_ALL=0
 FIRST_ONLY=1
@@ -76,6 +83,9 @@ Options:
   --attn-heads N        Attention heads, default: 4.
   --attn-layers N       Attention layers, default: 2.
   --ablation-mode NAME  ConMismatch9 ablation mode, default: full. Use legacy_full for the old gated full.
+  Warm-start and distillation settings are read from env vars:
+    WARMSTART_WEIGHTS_PATH, TEACHER_WEIGHTS_PATH, WARMSTART_FREEZE_EPOCHS,
+    DISTILL_ALPHA, DISTILL_TEMPERATURE, AUX_INIT_SCALE, AUX_MAX_SCALE
 EOF
 }
 
@@ -309,7 +319,7 @@ for row in "${DATASET_ROWS[@]}"; do
   log_path="$RUN_ROOT/train_logs/${run_name}.log"
   weights_path="$ARTIFACT_ROOT/${run_name}.pt"
 
-  "$PYTHON_BIN" - "$config_path" "$MODEL" "$ENCODER" "$dataset_name" "$dataset_file" "$weights_path" "$EPOCHS" "$LEARNING_RATE" "$WEIGHT_DECAY" "$PATIENCE" "$POS_CAP" "$NEG_CAP" "$SEED" "$DEVICE" "$BATCH_SIZE" "$FEATURE_CACHE_DIR" "$CPU_THREADS" "$NUM_WORKERS" "$AMP" "$HIDDEN_DIM" "$DROPOUT" "$ATTN_HEADS" "$ATTN_LAYERS" "$ABLATION_MODE" <<'PY'
+  "$PYTHON_BIN" - "$config_path" "$MODEL" "$ENCODER" "$dataset_name" "$dataset_file" "$weights_path" "$EPOCHS" "$LEARNING_RATE" "$WEIGHT_DECAY" "$PATIENCE" "$POS_CAP" "$NEG_CAP" "$SEED" "$DEVICE" "$BATCH_SIZE" "$FEATURE_CACHE_DIR" "$CPU_THREADS" "$NUM_WORKERS" "$AMP" "$HIDDEN_DIM" "$DROPOUT" "$ATTN_HEADS" "$ATTN_LAYERS" "$ABLATION_MODE" "$WARMSTART_WEIGHTS_PATH" "$TEACHER_WEIGHTS_PATH" "$WARMSTART_FREEZE_EPOCHS" "$DISTILL_ALPHA" "$DISTILL_TEMPERATURE" "$AUX_INIT_SCALE" "$AUX_MAX_SCALE" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -339,6 +349,13 @@ import sys
     attn_heads,
     attn_layers,
     ablation_mode,
+    warmstart_weights_path,
+    teacher_weights_path,
+    warmstart_freeze_epochs,
+    distill_alpha,
+    distill_temperature,
+    aux_init_scale,
+    aux_max_scale,
 ) = sys.argv[1:]
 
 def _cap(value: str):
@@ -353,6 +370,8 @@ payload = {
     "weights_path": weights_path,
     "dataset_files": [dataset_file],
     "dataset_name": dataset_name,
+    "warmstart_weights_path": warmstart_weights_path or None,
+    "teacher_weights_path": teacher_weights_path or None,
     "feature_cache_dir": feature_cache_dir,
     "cache_features": True,
     "sampling": {
@@ -373,6 +392,11 @@ payload = {
         "attn_heads": int(attn_heads),
         "attn_layers": int(attn_layers),
         "ablation_mode": ablation_mode,
+        "warmstart_freeze_epochs": int(warmstart_freeze_epochs),
+        "distill_alpha": float(distill_alpha),
+        "distill_temperature": float(distill_temperature),
+        "aux_init_scale": float(aux_init_scale),
+        "aux_max_scale": float(aux_max_scale),
     },
     "seed": int(seed),
 }
