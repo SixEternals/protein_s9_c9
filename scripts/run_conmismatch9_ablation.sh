@@ -16,7 +16,7 @@ NUM_WORKERS="${NUM_WORKERS:-4}"
 AMP="${AMP:-auto}"
 RUN_BASE="${RUN_BASE:-runs}"
 ARTIFACT_BASE="${ARTIFACT_BASE:-artifacts}"
-MODES="${MODES:-full no_mi no_run_attn no_fusion only_cnn no_mi_no_run_attn}"
+MODES="${MODES:-full legacy_full no_mi no_run_attn no_fusion only_cnn no_mi_no_run_attn}"
 DRY_RUN="${DRY_RUN:-0}"
 
 dataset_slug="${DATASET//[^A-Za-z0-9_]/_}"

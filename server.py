@@ -146,6 +146,18 @@ def _load_torch_predictor(model_name: str, weights_path: str | Path, device: str
     resolved_model = str(checkpoint.get("model_name", model_name)).lower()
     encoder_name = str(checkpoint.get("encoder_name", "r9" if resolved_model == "deepfocus" else "c9")).lower()
     model_config = dict(checkpoint.get("model_config", {}))
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
+    ablation_mode = str(model_config.get("ablation_mode", "full")).lower().replace("-", "_")
+    if resolved_model == "conmismatch9" and ablation_mode == "full":
+        legacy_keys = (
+            "fusion.gate.",
+            "fusion.pool_projection.",
+            "fusion.head.",
+            "fusion.cnn_norm.",
+            "fusion.run_norm.",
+        )
+        if any(any(key.startswith(prefix) for prefix in legacy_keys) for key in state_dict.keys()):
+            model_config["ablation_mode"] = "legacy_full"
 
     if resolved_model == "deepfocus":
         if DeepFocusTorchConfig is None or DeepFocusTorchModel is None:
@@ -158,7 +170,6 @@ def _load_torch_predictor(model_name: str, weights_path: str | Path, device: str
     else:
         raise ValueError(f"unknown torch model in checkpoint: {resolved_model}")
 
-    state_dict = checkpoint.get("model_state_dict", checkpoint)
     model.load_state_dict(state_dict)
     return TorchSequencePredictor(resolved_model, encoder_name, model, device)
 

@@ -2,13 +2,19 @@ import unittest
 
 import torch
 
-from models.conmismatch9_torch import ConMismatch9TorchConfig, ConMismatch9TorchModel
+from models.conmismatch9_torch import (
+    ConMismatch9TorchConfig,
+    ConMismatch9TorchModel,
+    GatedFusionHead,
+    ResidualAuxiliaryFusionHead,
+)
 
 
 class ConMismatch9AblationTests(unittest.TestCase):
     def test_supported_ablation_modes_run_forward(self):
         modes = [
             "full",
+            "legacy_full",
             "run_attn_no_mask",
             "fusion_norm",
             "run_attn_no_mask_fusion_norm",
@@ -34,6 +40,35 @@ class ConMismatch9AblationTests(unittest.TestCase):
                 with torch.no_grad():
                     y = model(x)
                 self.assertEqual(tuple(y.shape), (2,))
+
+    def test_full_uses_residual_auxiliary_fusion(self):
+        model = ConMismatch9TorchModel(
+            ConMismatch9TorchConfig(
+                hidden_dim=16,
+                attn_heads=4,
+                attn_layers=1,
+                dropout=0.0,
+                ablation_mode="full",
+            )
+        )
+        self.assertIsInstance(model.fusion, ResidualAuxiliaryFusionHead)
+
+        legacy_model = ConMismatch9TorchModel(
+            ConMismatch9TorchConfig(
+                hidden_dim=16,
+                attn_heads=4,
+                attn_layers=1,
+                dropout=0.0,
+                ablation_mode="legacy_full",
+            )
+        )
+        self.assertIsInstance(legacy_model.fusion, GatedFusionHead)
+
+        x = torch.zeros(2, 23, 9)
+        model.eval()
+        with torch.no_grad():
+            y = model(x)
+        self.assertEqual(tuple(y.shape), (2,))
 
     def test_invalid_ablation_mode_fails_fast(self):
         with self.assertRaises(ValueError):

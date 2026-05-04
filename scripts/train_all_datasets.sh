@@ -75,7 +75,7 @@ Options:
   --dropout VALUE       Dropout rate, default: 0.20.
   --attn-heads N        Attention heads, default: 4.
   --attn-layers N       Attention layers, default: 2.
-  --ablation-mode NAME  ConMismatch9 ablation mode, default: full.
+  --ablation-mode NAME  ConMismatch9 ablation mode, default: full. Use legacy_full for the old gated full.
 EOF
 }
 

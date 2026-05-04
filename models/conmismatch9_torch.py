@@ -253,9 +253,43 @@ class SingleBranchHead(nn.Module):
         return self.head(self._pool(features)).squeeze(-1)
 
 
+class ResidualAuxiliaryFusionHead(nn.Module):
+    """Keep the strong CNN path as the main logit and add weak MI/Run residuals."""
+
+    def __init__(self, hidden_dim: int, dropout: float, aux_init: float = 0.05, max_aux_scale: float = 0.50):
+        super().__init__()
+        if max_aux_scale <= 0.0:
+            raise ValueError("max_aux_scale must be positive")
+        self.max_aux_scale = float(max_aux_scale)
+        raw_init = self._raw_scale_init(aux_init, self.max_aux_scale)
+        self.main_head = SingleBranchHead(hidden_dim, dropout)
+        self.mi_head = SingleBranchHead(hidden_dim, dropout)
+        self.run_head = SingleBranchHead(hidden_dim, dropout)
+        self.raw_mi_scale = nn.Parameter(torch.tensor(raw_init, dtype=torch.float32))
+        self.raw_run_scale = nn.Parameter(torch.tensor(raw_init, dtype=torch.float32))
+
+    @staticmethod
+    def _raw_scale_init(initial_scale: float, max_aux_scale: float) -> float:
+        ratio = max(-0.999, min(0.999, float(initial_scale) / float(max_aux_scale)))
+        return 0.5 * math.log((1.0 + ratio) / (1.0 - ratio))
+
+    def auxiliary_scales(self) -> tuple[torch.Tensor, torch.Tensor]:
+        mi_scale = self.max_aux_scale * torch.tanh(self.raw_mi_scale)
+        run_scale = self.max_aux_scale * torch.tanh(self.raw_run_scale)
+        return mi_scale, run_scale
+
+    def forward(self, backbone_features: torch.Tensor, mi_features: torch.Tensor, run_features: torch.Tensor) -> torch.Tensor:
+        main_logit = self.main_head(backbone_features)
+        mi_logit = self.mi_head(mi_features)
+        run_logit = self.run_head(run_features)
+        mi_scale, run_scale = self.auxiliary_scales()
+        return main_logit + mi_scale * mi_logit + run_scale * run_logit
+
+
 class ConMismatch9TorchModel(nn.Module):
     VALID_ABLATION_MODES = {
         "full",
+        "legacy_full",
         "run_attn_no_mask",
         "fusion_norm",
         "run_attn_no_mask_fusion_norm",
@@ -276,7 +310,8 @@ class ConMismatch9TorchModel(nn.Module):
 
         self.use_mi = self.ablation_mode not in {"no_mi", "only_cnn", "no_mi_no_run_attn"}
         self.use_run_attn = self.ablation_mode not in {"no_run_attn", "only_cnn", "no_mi_no_run_attn"}
-        self.use_gated_fusion = self.ablation_mode != "no_fusion"
+        self.use_residual_fusion = self.ablation_mode == "full"
+        self.use_gated_fusion = self.ablation_mode not in {"no_fusion", "full"}
 
         self.backbone = CNNBackbone(self.config.hidden_dim, self.config.dropout)
         self.mi = MIModulationModule(self.config.hidden_dim, self.config.dropout) if self.use_mi else None
@@ -289,7 +324,9 @@ class ConMismatch9TorchModel(nn.Module):
             else None
         )
         if self.use_run_attn:
-            if not self.use_gated_fusion:
+            if self.use_residual_fusion:
+                self.fusion = ResidualAuxiliaryFusionHead(self.config.hidden_dim, self.config.dropout)
+            elif not self.use_gated_fusion:
                 self.fusion = ConcatFusionHead(self.config.hidden_dim, self.config.dropout)
             elif self.ablation_mode in {"fusion_norm", "run_attn_no_mask_fusion_norm"}:
                 self.fusion = NormalizedGatedFusionHead(self.config.hidden_dim, self.config.dropout)
@@ -312,4 +349,6 @@ class ConMismatch9TorchModel(nn.Module):
         if self.fusion is None:
             raise RuntimeError("fusion head is not initialized")
         run_features = self.run_attn(x_run)
+        if isinstance(self.fusion, ResidualAuxiliaryFusionHead):
+            return self.fusion(backbone_features, cnn_features, run_features)
         return self.fusion(cnn_features, run_features)
