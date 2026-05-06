@@ -15,6 +15,7 @@ class DeepFocusTorchConfig:
     dropout: float = 0.20
     attn_heads: int = 4
     attn_layers: int = 2
+    ablation_mode: str = "full"
 
 
 class RegionAwareInception(nn.Module):
@@ -142,8 +143,12 @@ class DeepFocusTorchModel(nn.Module):
     def __init__(self, config: DeepFocusTorchConfig | None = None):
         super().__init__()
         self.config = config or DeepFocusTorchConfig()
+        self.ablation_mode = self.config.ablation_mode
         self.inception = RegionAwareInception(self.config.input_dim, self.config.hidden_dim, self.config.dropout)
-        self.transformer = CATransformerEncoder(self.config)
+        if self.ablation_mode == "full":
+            self.transformer = CATransformerEncoder(self.config)
+        else:
+            self.transformer = None
         self.head = nn.Sequential(
             nn.LayerNorm(self.config.hidden_dim * 2),
             nn.Dropout(self.config.dropout),
@@ -155,6 +160,7 @@ class DeepFocusTorchModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         features = self.inception(x)
-        features = self.transformer(features)
+        if self.transformer is not None:
+            features = self.transformer(features)
         pooled = torch.cat([features.mean(dim=1), features.max(dim=1).values], dim=-1)
         return self.head(pooled).squeeze(-1)

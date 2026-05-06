@@ -424,6 +424,7 @@ def build_model(config: dict[str, Any]) -> tuple[str, str, nn.Module, dict[str, 
             dropout=dropout,
             attn_heads=attn_heads,
             attn_layers=attn_layers,
+            ablation_mode=ablation_mode,
         )
         return model_name, "r9", DeepFocusTorchModel(model_config), asdict(model_config)
 
@@ -503,22 +504,39 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
     if warmstart_weights_path:
         warmstart_payload = _checkpoint_payload(warmstart_weights_path)
         warmstart_model_name, warmstart_encoder_name, warmstart_model = _instantiate_model_from_payload(warmstart_payload)
-        if model_name != "conmismatch9":
-            raise ValueError("warmstart is only supported for ConMismatch9 full training")
-        if warmstart_model_name != "conmismatch9" or warmstart_encoder_name != expected_encoder:
+        if warmstart_model_name != model_name or warmstart_encoder_name != expected_encoder:
             raise ValueError(
                 f"warmstart checkpoint expects model={warmstart_model_name} encoder={warmstart_encoder_name}, "
                 f"but current training uses model={model_name} encoder={expected_encoder}"
             )
-        if not isinstance(model, ConMismatch9TorchModel) or not isinstance(warmstart_model, ConMismatch9TorchModel):
-            raise RuntimeError("warmstart requires ConMismatch9 torch models")
-        if model.ablation_mode not in {"full", "cmpd_residual"}:
-            raise ValueError("warmstart is only supported when the student ablation_mode is full or cmpd_residual")
-        if warmstart_model.config.ablation_mode not in {"only_cnn", "full"}:
-            raise ValueError(
-                f"warmstart checkpoint must come from only_cnn/full, got {warmstart_model.config.ablation_mode!r}"
-            )
-        model.warmstart_main_path_from_checkpoint(warmstart_payload)
+        if model_name == "conmismatch9":
+            if not isinstance(model, ConMismatch9TorchModel) or not isinstance(warmstart_model, ConMismatch9TorchModel):
+                raise RuntimeError("warmstart requires ConMismatch9 torch models")
+            if model.ablation_mode not in {"full", "cmpd_residual"}:
+                raise ValueError("warmstart is only supported when the student ablation_mode is full or cmpd_residual")
+            if warmstart_model.config.ablation_mode not in {"only_cnn", "full"}:
+                raise ValueError(
+                    f"warmstart checkpoint must come from only_cnn/full, got {warmstart_model.config.ablation_mode!r}"
+                )
+            model.warmstart_main_path_from_checkpoint(warmstart_payload)
+        elif model_name == "deepfocus":
+            if not isinstance(model, DeepFocusTorchModel) or not isinstance(warmstart_model, DeepFocusTorchModel):
+                raise RuntimeError("warmstart requires DeepFocus torch models")
+            if model.ablation_mode != "full":
+                raise ValueError("warmstart is only supported when the student ablation_mode is full")
+            if warmstart_model.config.ablation_mode not in {"inception_only", "full"}:
+                raise ValueError(
+                    f"warmstart checkpoint must come from inception_only/full, got {warmstart_model.config.ablation_mode!r}"
+                )
+            state_dict = warmstart_payload.get("model_state_dict", warmstart_payload)
+            if not isinstance(state_dict, dict):
+                raise ValueError("checkpoint does not contain a model_state_dict")
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            if unexpected:
+                raise RuntimeError(f"warmstart unexpected keys: {unexpected}")
+            print(f"warmstart_loaded_keys={len(state_dict)} missing_transformer_keys={len(missing)}")
+        else:
+            raise ValueError(f"warmstart is not supported for model={model_name}")
 
     features, labels, dataset_files, dataset_summaries = load_dataset(config)
     train_idx, val_idx, test_idx = split_indices(labels, seed)
@@ -562,15 +580,21 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
             parameter.requires_grad = False
         print(f"teacher_from={teacher_source} distill_alpha={distill_alpha:.4f} distill_temperature={distill_temperature:.2f}")
 
-    if warmstart_weights_path and warmstart_freeze_epochs > 0 and isinstance(model, ConMismatch9TorchModel):
-        if isinstance(model.fusion, ResidualAuxiliaryFusionHead):
-            _set_module_requires_grad(model.backbone, False)
-            _set_module_requires_grad(model.fusion.main_head, False)
-            print(f"freeze_main_epochs={warmstart_freeze_epochs}")
-        elif model.ablation_mode == "cmpd_residual" and model.single_head is not None:
-            _set_module_requires_grad(model.backbone, False)
-            _set_module_requires_grad(model.single_head, False)
-            print(f"freeze_main_epochs={warmstart_freeze_epochs}")
+    if warmstart_weights_path and warmstart_freeze_epochs > 0:
+        if isinstance(model, ConMismatch9TorchModel):
+            if isinstance(model.fusion, ResidualAuxiliaryFusionHead):
+                _set_module_requires_grad(model.backbone, False)
+                _set_module_requires_grad(model.fusion.main_head, False)
+                print(f"freeze_main_epochs={warmstart_freeze_epochs}")
+            elif model.ablation_mode == "cmpd_residual" and model.single_head is not None:
+                _set_module_requires_grad(model.backbone, False)
+                _set_module_requires_grad(model.single_head, False)
+                print(f"freeze_main_epochs={warmstart_freeze_epochs}")
+        elif isinstance(model, DeepFocusTorchModel):
+            if model.ablation_mode == "full" and model.transformer is not None:
+                _set_module_requires_grad(model.inception, False)
+                _set_module_requires_grad(model.head, False)
+                print(f"freeze_inception_head_epochs={warmstart_freeze_epochs}")
 
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight_value, device=device, dtype=torch.float32))
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -595,16 +619,21 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
             warmstart_weights_path
             and warmstart_freeze_epochs > 0
             and epoch == warmstart_freeze_epochs + 1
-            and isinstance(model, ConMismatch9TorchModel)
         ):
-            if isinstance(model.fusion, ResidualAuxiliaryFusionHead):
-                _set_module_requires_grad(model.backbone, True)
-                _set_module_requires_grad(model.fusion.main_head, True)
-                print("unfreeze_main_path")
-            elif model.ablation_mode == "cmpd_residual" and model.single_head is not None:
-                _set_module_requires_grad(model.backbone, True)
-                _set_module_requires_grad(model.single_head, True)
-                print("unfreeze_main_path")
+            if isinstance(model, ConMismatch9TorchModel):
+                if isinstance(model.fusion, ResidualAuxiliaryFusionHead):
+                    _set_module_requires_grad(model.backbone, True)
+                    _set_module_requires_grad(model.fusion.main_head, True)
+                    print("unfreeze_main_path")
+                elif model.ablation_mode == "cmpd_residual" and model.single_head is not None:
+                    _set_module_requires_grad(model.backbone, True)
+                    _set_module_requires_grad(model.single_head, True)
+                    print("unfreeze_main_path")
+            elif isinstance(model, DeepFocusTorchModel):
+                if model.ablation_mode == "full" and model.transformer is not None:
+                    _set_module_requires_grad(model.inception, True)
+                    _set_module_requires_grad(model.head, True)
+                    print("unfreeze_inception_head")
 
         model.train()
         train_loss_total = 0.0
