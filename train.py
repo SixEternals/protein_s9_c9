@@ -512,8 +512,8 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
             )
         if not isinstance(model, ConMismatch9TorchModel) or not isinstance(warmstart_model, ConMismatch9TorchModel):
             raise RuntimeError("warmstart requires ConMismatch9 torch models")
-        if model.ablation_mode != "full":
-            raise ValueError("warmstart is only supported when the student ablation_mode is full")
+        if model.ablation_mode not in {"full", "cmpd_residual"}:
+            raise ValueError("warmstart is only supported when the student ablation_mode is full or cmpd_residual")
         if warmstart_model.config.ablation_mode not in {"only_cnn", "full"}:
             raise ValueError(
                 f"warmstart checkpoint must come from only_cnn/full, got {warmstart_model.config.ablation_mode!r}"
@@ -567,6 +567,10 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
             _set_module_requires_grad(model.backbone, False)
             _set_module_requires_grad(model.fusion.main_head, False)
             print(f"freeze_main_epochs={warmstart_freeze_epochs}")
+        elif model.ablation_mode == "cmpd_residual" and model.single_head is not None:
+            _set_module_requires_grad(model.backbone, False)
+            _set_module_requires_grad(model.single_head, False)
+            print(f"freeze_main_epochs={warmstart_freeze_epochs}")
 
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight_value, device=device, dtype=torch.float32))
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -592,11 +596,15 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
             and warmstart_freeze_epochs > 0
             and epoch == warmstart_freeze_epochs + 1
             and isinstance(model, ConMismatch9TorchModel)
-            and isinstance(model.fusion, ResidualAuxiliaryFusionHead)
         ):
-            _set_module_requires_grad(model.backbone, True)
-            _set_module_requires_grad(model.fusion.main_head, True)
-            print("unfreeze_main_path")
+            if isinstance(model.fusion, ResidualAuxiliaryFusionHead):
+                _set_module_requires_grad(model.backbone, True)
+                _set_module_requires_grad(model.fusion.main_head, True)
+                print("unfreeze_main_path")
+            elif model.ablation_mode == "cmpd_residual" and model.single_head is not None:
+                _set_module_requires_grad(model.backbone, True)
+                _set_module_requires_grad(model.single_head, True)
+                print("unfreeze_main_path")
 
         model.train()
         train_loss_total = 0.0
@@ -660,6 +668,11 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
         model.load_state_dict(best_state)
 
     test_metrics = evaluate(model, test_loader, criterion, device, use_amp)
+    residual_auxiliary_scales = (
+        model.residual_auxiliary_scale_values()
+        if isinstance(model, ConMismatch9TorchModel)
+        else None
+    )
     weights_path = config.get("weights_path")
     if weights_path:
         weights = Path(weights_path)
@@ -674,6 +687,7 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
                 "best_epoch": best_epoch,
                 "best_val_aupr": best_val_aupr,
                 "test_metrics": test_metrics,
+                "residual_auxiliary_scales": residual_auxiliary_scales,
             },
             weights,
         )
@@ -702,6 +716,7 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
         "warmstart_freeze_epochs": int(warmstart_freeze_epochs),
         "distill_alpha": float(distill_alpha),
         "distill_temperature": float(distill_temperature),
+        "residual_auxiliary_scales": residual_auxiliary_scales,
         "history": history,
         "weights_path": str(weights_path) if weights_path else None,
     }

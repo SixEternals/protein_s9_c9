@@ -13,7 +13,7 @@ BATCH_SIZE="${BATCH_SIZE:-512}"
 CPU_THREADS="${CPU_THREADS:-8}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 AMP="${AMP:-auto}"
-RECIPES="${RECIPES:-guard_b guard_c}"
+RECIPES="${RECIPES:-guard_b guard_c guard_d}"
 STOP_AFTER_EXTERNAL="${STOP_AFTER_EXTERNAL:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 FULL_DISTILL_TEMPERATURE="${FULL_DISTILL_TEMPERATURE:-2.0}"
@@ -39,6 +39,7 @@ run_dataset() {
   local freeze_epochs="$4"
   local distill_alpha="$5"
   local aux_max_scale="$6"
+  local only_cnn_artifact_base="${7:-}"
 
   local run_base="$PROJECT_ROOT/runs/full_upgrade_${recipe}"
   local artifact_base="$PROJECT_ROOT/artifacts/full_upgrade_${recipe}"
@@ -47,6 +48,7 @@ run_dataset() {
 
   RUN_BASE="$run_base" \
   ARTIFACT_BASE="$artifact_base" \
+  ONLY_CNN_ARTIFACT_BASE="$only_cnn_artifact_base" \
   PYTHON_BIN="$PYTHON_BIN" \
   DATA_ROOT="$DATA_ROOT" \
   DEVICE="$DEVICE" \
@@ -75,6 +77,7 @@ run_recipe() {
   local freeze_epochs
   local distill_alpha
   local aux_max_scale
+  local only_cnn_artifact_base=""
 
   case "$recipe" in
     guard_b)
@@ -87,6 +90,12 @@ run_recipe() {
       distill_alpha=0.50
       aux_max_scale=0.10
       ;;
+    guard_d)
+      freeze_epochs=30
+      distill_alpha=0.45
+      aux_max_scale=0.10
+      only_cnn_artifact_base="$PROJECT_ROOT/artifacts/full_upgrade_guard_c"
+      ;;
     *)
       echo "Unknown recipe: $recipe" >&2
       exit 2
@@ -97,18 +106,21 @@ run_recipe() {
   echo "  freeze_epochs=$freeze_epochs"
   echo "  distill_alpha=$distill_alpha"
   echo "  aux_max_scale=$aux_max_scale"
+  if [[ -n "$only_cnn_artifact_base" ]]; then
+    echo "  only_cnn_artifact_base=$only_cnn_artifact_base"
+  fi
   echo
 
-  run_dataset "$recipe" "Tasi" "42 43 44" "$freeze_epochs" "$distill_alpha" "$aux_max_scale"
-  run_dataset "$recipe" "K562" "42 43 44 45 46" "$freeze_epochs" "$distill_alpha" "$aux_max_scale"
+  run_dataset "$recipe" "Tasi" "42 43 44" "$freeze_epochs" "$distill_alpha" "$aux_max_scale" "$only_cnn_artifact_base"
+  run_dataset "$recipe" "K562" "42 43 44 45 46" "$freeze_epochs" "$distill_alpha" "$aux_max_scale" "$only_cnn_artifact_base"
 
   if [[ "$STOP_AFTER_EXTERNAL" == "1" ]]; then
     echo "STOP_AFTER_EXTERNAL=1, skipping core datasets for recipe=$recipe."
     return
   fi
 
-  run_dataset "$recipe" "CHANGE-seq" "42 43 44" "$freeze_epochs" "$distill_alpha" "$aux_max_scale"
-  run_dataset "$recipe" "SITE" "42 43 44 45 46" "$freeze_epochs" "$distill_alpha" "$aux_max_scale"
+  run_dataset "$recipe" "CHANGE-seq" "42 43 44" "$freeze_epochs" "$distill_alpha" "$aux_max_scale" "$only_cnn_artifact_base"
+  run_dataset "$recipe" "SITE" "42 43 44 45 46" "$freeze_epochs" "$distill_alpha" "$aux_max_scale" "$only_cnn_artifact_base"
 }
 
 for recipe in $RECIPES; do

@@ -105,6 +105,31 @@ class ConMismatch9AblationTests(unittest.TestCase):
             full_logits = full(x)
         torch.testing.assert_close(full_logits, base_logits)
 
+    def test_full_reports_residual_auxiliary_scale_values(self):
+        model = ConMismatch9TorchModel(
+            ConMismatch9TorchConfig(
+                hidden_dim=16,
+                attn_heads=4,
+                attn_layers=1,
+                dropout=0.0,
+                aux_max_scale=0.2,
+                ablation_mode="full",
+            )
+        )
+        scales = model.residual_auxiliary_scale_values()
+        self.assertEqual(scales, {"mi": 0.0, "run": 0.0, "max_aux_scale": 0.2})
+
+        only_cnn = ConMismatch9TorchModel(
+            ConMismatch9TorchConfig(
+                hidden_dim=16,
+                attn_heads=4,
+                attn_layers=1,
+                dropout=0.0,
+                ablation_mode="only_cnn",
+            )
+        )
+        self.assertIsNone(only_cnn.residual_auxiliary_scale_values())
+
     def test_invalid_ablation_mode_fails_fast(self):
         with self.assertRaises(ValueError):
             ConMismatch9TorchModel(ConMismatch9TorchConfig(ablation_mode="bad_mode"))

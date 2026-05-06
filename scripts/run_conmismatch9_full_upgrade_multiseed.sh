@@ -17,8 +17,10 @@ AMP="${AMP:-auto}"
 SEEDS="${SEEDS:-42 43 44}"
 RUN_BASE="${RUN_BASE:-runs}"
 ARTIFACT_BASE="${ARTIFACT_BASE:-artifacts}"
+ONLY_CNN_ARTIFACT_BASE="${ONLY_CNN_ARTIFACT_BASE:-}"
 REUSE_ONLY_CNN="${REUSE_ONLY_CNN:-1}"
 RUN_LEGACY_FULL="${RUN_LEGACY_FULL:-0}"
+ABLATION_MODE="${ABLATION_MODE:-full}"
 FULL_WARMSTART_FREEZE_EPOCHS="${FULL_WARMSTART_FREEZE_EPOCHS:-3}"
 FULL_DISTILL_ALPHA="${FULL_DISTILL_ALPHA:-0.10}"
 FULL_DISTILL_TEMPERATURE="${FULL_DISTILL_TEMPERATURE:-2.0}"
@@ -44,12 +46,17 @@ fi
 
 upgrade_root="$RUN_BASE/full_upgrade_${dataset_slug_lower}_conmismatch9"
 artifact_root_base="$ARTIFACT_BASE/full_upgrade_${dataset_slug_lower}_conmismatch9"
+only_cnn_artifact_root_base="$artifact_root_base"
+if [[ -n "$ONLY_CNN_ARTIFACT_BASE" ]]; then
+  only_cnn_artifact_root_base="$ONLY_CNN_ARTIFACT_BASE/full_upgrade_${dataset_slug_lower}_conmismatch9"
+fi
 
 echo "ConMismatch9 full-upgrade multiseed plan"
 echo "  dataset:         $DATASET"
 echo "  data:            $dataset_file"
 echo "  seeds:           ${seed_list[*]}"
 echo "  reuse_only_cnn:  $REUSE_ONLY_CNN"
+echo "  only_cnn_base:   $only_cnn_artifact_root_base"
 echo "  run_legacy_full: $RUN_LEGACY_FULL"
 echo "  full freeze:     $FULL_WARMSTART_FREEZE_EPOCHS epoch(s)"
 echo "  full distill:    alpha=$FULL_DISTILL_ALPHA temperature=$FULL_DISTILL_TEMPERATURE"
@@ -122,14 +129,23 @@ run_mode() {
 
 for seed in "${seed_list[@]}"; do
   echo "==> seed $seed"
-  only_cnn_weights="$artifact_root_base/seed_${seed}/only_cnn/${run_name}.pt"
+  current_only_cnn_weights="$artifact_root_base/seed_${seed}/only_cnn/${run_name}.pt"
+  reference_only_cnn_weights="$only_cnn_artifact_root_base/seed_${seed}/only_cnn/${run_name}.pt"
+  only_cnn_weights="$current_only_cnn_weights"
 
-  if [[ "$REUSE_ONLY_CNN" == "1" && -f "$only_cnn_weights" ]]; then
+  if [[ "$REUSE_ONLY_CNN" == "1" && -f "$reference_only_cnn_weights" ]]; then
+    only_cnn_weights="$reference_only_cnn_weights"
+    echo "    mode:           only_cnn"
+    echo "    reuse weights:  $only_cnn_weights"
+    echo
+  elif [[ "$REUSE_ONLY_CNN" == "1" && -f "$current_only_cnn_weights" ]]; then
+    only_cnn_weights="$current_only_cnn_weights"
     echo "    mode:           only_cnn"
     echo "    reuse weights:  $only_cnn_weights"
     echo
   else
     run_mode "$seed" "only_cnn" "" "" "0" "0.0" "$FULL_DISTILL_TEMPERATURE"
+    only_cnn_weights="$current_only_cnn_weights"
   fi
 
   if [[ "$DRY_RUN" != "1" && ! -f "$only_cnn_weights" ]]; then
@@ -139,7 +155,7 @@ for seed in "${seed_list[@]}"; do
 
   run_mode \
     "$seed" \
-    "full" \
+    "$ABLATION_MODE" \
     "$only_cnn_weights" \
     "$only_cnn_weights" \
     "$FULL_WARMSTART_FREEZE_EPOCHS" \

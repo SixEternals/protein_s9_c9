@@ -65,6 +65,53 @@ class MIModulationModule(nn.Module):
         return backbone * (1.0 + gamma) + beta
 
 
+class CMPDModule(nn.Module):
+    """Consecutive Mismatch Pattern Detector.
+
+    Multi-scale 1D CNN that detects local consecutive mismatch patterns
+    (2-bp, 3+-bp runs) from bits 7-8 of the C9 encoding. Outputs a
+    feature-level residual to be added to the backbone representation.
+    """
+
+    def __init__(self, hidden_dim: int, dropout: float):
+        super().__init__()
+        inner = hidden_dim // 4
+        self.embed = nn.Linear(2, inner)
+        self.branch3 = nn.Sequential(
+            nn.Conv1d(inner, inner, kernel_size=3, padding=1),
+            nn.BatchNorm1d(inner),
+            nn.GELU(),
+        )
+        self.branch5 = nn.Sequential(
+            nn.Conv1d(inner, inner, kernel_size=5, padding=2),
+            nn.BatchNorm1d(inner),
+            nn.GELU(),
+        )
+        self.branch_dil = nn.Sequential(
+            nn.Conv1d(inner, inner, kernel_size=3, padding=2, dilation=2),
+            nn.BatchNorm1d(inner),
+            nn.GELU(),
+        )
+        self.fusion = nn.Sequential(
+            nn.Conv1d(inner * 3, hidden_dim // 2, kernel_size=1),
+            nn.BatchNorm1d(hidden_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.proj = nn.Linear(hidden_dim // 2, hidden_dim)
+
+    def forward(self, x_run: torch.Tensor) -> torch.Tensor:
+        x = self.embed(x_run)  # [B, L, inner]
+        x = x.transpose(1, 2)  # [B, inner, L]
+        x3 = self.branch3(x)
+        x5 = self.branch5(x)
+        xd = self.branch_dil(x)
+        x = torch.cat([x3, x5, xd], dim=1)  # [B, inner*3, L]
+        x = self.fusion(x)  # [B, hidden_dim//2, L]
+        x = x.transpose(1, 2)  # [B, L, hidden_dim//2]
+        return self.proj(x)  # [B, L, hidden_dim]
+
+
 class RunBandwidthMaskGenerator(nn.Module):
     """Dynamic Run-Attn mask driven by C9 continuous-mismatch state bits.
 
@@ -310,6 +357,7 @@ class ConMismatch9TorchModel(nn.Module):
         "no_fusion",
         "only_cnn",
         "no_mi_no_run_attn",
+        "cmpd_residual",
     }
 
     def __init__(self, config: ConMismatch9TorchConfig | None = None):
@@ -320,13 +368,15 @@ class ConMismatch9TorchModel(nn.Module):
             allowed = ", ".join(sorted(self.VALID_ABLATION_MODES))
             raise ValueError(f"unsupported ConMismatch9 ablation_mode: {self.config.ablation_mode!r}; expected one of {allowed}")
 
+        self.use_cmpd = self.ablation_mode == "cmpd_residual"
         self.use_mi = self.ablation_mode not in {"no_mi", "only_cnn", "no_mi_no_run_attn"}
-        self.use_run_attn = self.ablation_mode not in {"no_run_attn", "only_cnn", "no_mi_no_run_attn"}
+        self.use_run_attn = self.ablation_mode not in {"no_run_attn", "only_cnn", "no_mi_no_run_attn", "cmpd_residual"}
         self.use_residual_fusion = self.ablation_mode == "full"
-        self.use_gated_fusion = self.ablation_mode not in {"no_fusion", "full"}
+        self.use_gated_fusion = self.ablation_mode not in {"no_fusion", "full", "cmpd_residual"}
 
         self.backbone = CNNBackbone(self.config.hidden_dim, self.config.dropout)
         self.mi = MIModulationModule(self.config.hidden_dim, self.config.dropout) if self.use_mi else None
+        self.cmpd = CMPDModule(self.config.hidden_dim, self.config.dropout) if self.use_cmpd else None
         self.run_attn = (
             RunAttentionBranch(
                 self.config,
@@ -355,8 +405,8 @@ class ConMismatch9TorchModel(nn.Module):
             self.single_head = SingleBranchHead(self.config.hidden_dim, self.config.dropout)
 
     def warmstart_main_path(self, state_dict: dict[str, torch.Tensor]) -> None:
-        if not isinstance(self.fusion, ResidualAuxiliaryFusionHead):
-            raise ValueError("warmstart_main_path is only supported for residual full mode")
+        if self.ablation_mode not in {"full", "cmpd_residual"}:
+            raise ValueError("warmstart_main_path is only supported for 'full' or 'cmpd_residual' mode")
 
         backbone_state = _prefixed_state_dict(state_dict, "backbone.")
         main_head_state = _prefixed_state_dict(state_dict, "single_head.")
@@ -368,8 +418,16 @@ class ConMismatch9TorchModel(nn.Module):
             raise ValueError("warmstart checkpoint does not contain a compatible main head state")
 
         self.backbone.load_state_dict(backbone_state, strict=True)
-        self.fusion.main_head.load_state_dict(main_head_state, strict=True)
-        self.fusion.reset_auxiliary_scales(0.0)
+
+        if self.ablation_mode == "full":
+            if not isinstance(self.fusion, ResidualAuxiliaryFusionHead):
+                raise ValueError("full mode expects ResidualAuxiliaryFusionHead")
+            self.fusion.main_head.load_state_dict(main_head_state, strict=True)
+            self.fusion.reset_auxiliary_scales(0.0)
+        elif self.ablation_mode == "cmpd_residual":
+            if self.single_head is None:
+                raise ValueError("cmpd_residual mode expects single_head")
+            self.single_head.load_state_dict(main_head_state, strict=True)
 
     def warmstart_main_path_from_checkpoint(self, checkpoint: dict[str, object]) -> None:
         state_dict = checkpoint.get("model_state_dict", checkpoint)
@@ -377,11 +435,29 @@ class ConMismatch9TorchModel(nn.Module):
             raise ValueError("warmstart checkpoint does not contain a state dict")
         self.warmstart_main_path(state_dict)  # type: ignore[arg-type]
 
+    def residual_auxiliary_scale_values(self) -> dict[str, float] | None:
+        if not isinstance(self.fusion, ResidualAuxiliaryFusionHead):
+            return None
+        mi_scale, run_scale = self.fusion.auxiliary_scales()
+        return {
+            "mi": float(mi_scale.detach().cpu().item()),
+            "run": float(run_scale.detach().cpu().item()),
+            "max_aux_scale": float(self.fusion.max_aux_scale),
+        }
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_split = [x[:, :, 0:4], x[:, :, 4:7], x[:, :, 7:9]]
         x_base, x_mi, x_run = x_split
         backbone_features = self.backbone(x_base)
         cnn_features = self.mi(x_mi, backbone_features) if self.mi is not None else backbone_features
+
+        if self.use_cmpd:
+            if self.cmpd is None or self.single_head is None:
+                raise RuntimeError("cmpd_residual components are not initialized")
+            cmpd_features = self.cmpd(x_run)
+            fused_features = cnn_features + cmpd_features
+            return self.single_head(fused_features)
+
         if self.run_attn is None:
             if self.single_head is None:
                 raise RuntimeError("single_branch head is not initialized")
