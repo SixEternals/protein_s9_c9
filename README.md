@@ -4,6 +4,36 @@ Local implementation scaffold for the R9/DeepFocus and C9/ConMismatch9 pipelines
 
 > **⚠️ Fallback mode notice**: The default configs (`configs/*.yaml`) do **not** point to pretrained weights. If you start the server with default settings, it will run in **fallback mode** using lightweight built-in models (`model_backend: legacy_json`). For production predictions, you must train or provide your own `.pt` checkpoints and update `weights_path` in the config.
 
+## Quick usage
+
+1. Install the project environment:
+
+   ```bash
+   bash scripts/setup_env.sh
+   ```
+
+2. Start the server:
+
+   ```bash
+   python3 server.py --port 8000 --device cpu
+   ```
+
+3. Open the UI at `http://127.0.0.1:8000/`.
+
+4. Use 23nt sgRNA/DNA pairs only. `U` is converted to `T`, and invalid or non-23nt input is rejected.
+
+5. Use the same endpoints from the UI or with `curl`:
+
+   - `/health`
+   - `/models`
+   - `/predict`
+   - `/predict/batch`
+   - `/predict/file`
+   - `/train`
+   - `/jobs/{job_id}`
+
+For a step-by-step guide, see [doc/21_快速使用指南.md](doc/21_快速使用指南.md) and the full reference in [doc/17_使用文档.md](doc/17_使用文档.md).
+
 ## What is included
 
 - `encoders/r9_encoder.py`
@@ -154,19 +184,24 @@ curl http://127.0.0.1:8000/jobs/{job_id}
 
 ## Documentation
 
+- [doc/21_快速使用指南.md](doc/21_快速使用指南.md) — quick usage guide for the current UI and API
 - `doc/17_使用文档.md` — full usage guide (Chinese)
 - `doc/20_深度学习模块清单与接口设计报告.md` — deep learning module inventory and API design
 - `doc/18_从零开始理解CRISPR-DualPred.md` — beginner-friendly conceptual guide
 
 ## Testing
 
-The full test suite requires `torch` and the project conda environment:
+The full test suite is intended to run in the project conda environment:
 
 ```bash
 /data/zwf/conda/envs/reborn_seed/bin/python -m unittest discover -s tests -v
 ```
 
-Tests that depend on torch are automatically skipped if torch is not installed, so the command will not crash on a bare environment.
+For a lighter check that does not require `torch`, run:
+
+```bash
+/data/zwf/conda/envs/reborn_seed/bin/python -m unittest tests.test_light -v
+```
 
 ## Notes
 

@@ -21,6 +21,7 @@ ENV/
 doc/
 artifacts/
 runs/
+output/
 *.log
 *.pt
 *.pth
