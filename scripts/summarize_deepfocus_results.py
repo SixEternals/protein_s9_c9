@@ -28,10 +28,11 @@ def main() -> None:
     rows = []
     for dataset in datasets:
         slug = dataset.lower().replace("-", "_")
+        safe_name = dataset.replace("-", "_")
         base = run_base / f"full_upgrade_{slug}_deepfocus"
         for seed in seeds:
             for mode in ["inception_only", "full"]:
-                summary = base / f"seed_{seed}" / mode / "train_summaries" / f"deepfocus_r9_{dataset}.json"
+                summary = base / f"seed_{seed}" / mode / "train_summaries" / f"deepfocus_r9_{safe_name}.json"
                 metrics = extract_metrics(summary)
                 if metrics:
                     rows.append({

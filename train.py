@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import random
+import subprocess
+import sys
 from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
@@ -126,18 +128,19 @@ def split_indices(labels: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray
     return train, val, test
 
 
-def _cache_key(dataset_file: str, encoder_name: str, indices: np.ndarray) -> str:
+def _cache_key(dataset_file: str, encoder_name: str, indices: np.ndarray, variant: str = "") -> str:
     stat = Path(dataset_file).stat()
-    payload = "|".join(
-        [
-            str(Path(dataset_file).resolve()),
-            encoder_name,
-            str(stat.st_size),
-            str(stat.st_mtime_ns),
-            str(len(indices)),
-            hashlib.sha1(np.asarray(indices, dtype=np.int64).tobytes()).hexdigest(),
-        ]
-    )
+    parts = [
+        str(Path(dataset_file).resolve()),
+        encoder_name,
+        str(stat.st_size),
+        str(stat.st_mtime_ns),
+        str(len(indices)),
+        hashlib.sha1(np.asarray(indices, dtype=np.int64).tobytes()).hexdigest(),
+    ]
+    if variant:
+        parts.append(variant)
+    payload = "|".join(parts)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -181,10 +184,11 @@ def _load_or_encode_r9(
     if use_stored_r9 and "X" in data:
         return np.asarray(data["X"][indices], dtype=np.uint8), "stored_x_r9"
 
+    variant = f"stored_{int(use_stored_r9)}"
     if cache_features and cache_dir:
         cache_root = Path(cache_dir)
         cache_root.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_root / f"{_safe_stem(dataset_file)}_r9_{_cache_key(dataset_file, 'r9', indices)}.npy"
+        cache_path = cache_root / f"{_safe_stem(dataset_file)}_r9_{_cache_key(dataset_file, 'r9', indices, variant)}.npy"
         if cache_path.exists():
             return np.load(cache_path, allow_pickle=False), "cached_r9"
 
@@ -192,7 +196,7 @@ def _load_or_encode_r9(
     if cache_features and cache_dir:
         cache_root = Path(cache_dir)
         cache_root.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_root / f"{_safe_stem(dataset_file)}_r9_{_cache_key(dataset_file, 'r9', indices)}.npy"
+        cache_path = cache_root / f"{_safe_stem(dataset_file)}_r9_{_cache_key(dataset_file, 'r9', indices, variant)}.npy"
         tmp_path = cache_path.with_suffix(".tmp")
         with tmp_path.open("wb") as handle:
             np.save(handle, encoded)
@@ -721,6 +725,47 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
             weights,
         )
 
+    def _git_info() -> dict[str, Any]:
+        try:
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, cwd=Path(__file__).parent).strip()
+            dirty = subprocess.check_output(["git", "status", "--porcelain"], text=True, cwd=Path(__file__).parent).strip() != ""
+            return {"commit": commit, "dirty": dirty}
+        except Exception:
+            return {"commit": None, "dirty": None}
+
+    def _env_info() -> dict[str, Any]:
+        return {
+            "python": sys.version.split()[0],
+            "torch": torch.__version__,
+            "numpy": np.__version__,
+            "cuda": torch.version.cuda if torch.cuda.is_available() else None,
+            "cuda_available": torch.cuda.is_available(),
+            "command": sys.argv,
+        }
+
+    def _data_fingerprints(files: list[str]) -> list[dict[str, Any]]:
+        fingerprints: list[dict[str, Any]] = []
+        for f in files:
+            p = Path(f)
+            if p.exists():
+                stat = p.stat()
+                fingerprints.append(
+                    {
+                        "path": str(f),
+                        "size": stat.st_size,
+                        "mtime": stat.st_mtime,
+                    }
+                )
+            else:
+                fingerprints.append(
+                    {
+                        "path": str(f),
+                        "size": None,
+                        "mtime": None,
+                    }
+                )
+        return fingerprints
+
     return {
         "model": model_name,
         "encoder": encoder_name,
@@ -748,6 +793,9 @@ def train(config: dict[str, Any]) -> dict[str, Any]:
         "residual_auxiliary_scales": residual_auxiliary_scales,
         "history": history,
         "weights_path": str(weights_path) if weights_path else None,
+        "data_fingerprints": _data_fingerprints(dataset_files),
+        "git": _git_info(),
+        "env": _env_info(),
     }
 
 
@@ -757,7 +805,16 @@ def main() -> None:
     parser.add_argument("--output", default=None, help="Optional path to write the training summary")
     args = parser.parse_args()
 
+    from utils.config import validate_config
+
     config = load_config(args.config)
+    cfg_errors = validate_config(config)
+    if cfg_errors:
+        print("Config validation failed:")
+        for err in cfg_errors:
+            print(f"  - {err}")
+        raise SystemExit(2)
+
     summary = train(config)
     if args.output:
         output_path = Path(args.output)

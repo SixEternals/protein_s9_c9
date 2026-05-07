@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import os
 import threading
+import time
 import uuid
 from contextlib import nullcontext
 from http import HTTPStatus
@@ -44,7 +47,9 @@ except Exception:  # pragma: no cover - keep JSON fallback usable without torch/
 
 try:  # pragma: no cover - optional dependency support
     from fastapi import FastAPI
-    from fastapi.responses import JSONResponse
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import HTMLResponse, PlainTextResponse
+    from fastapi.staticfiles import StaticFiles
 
     FASTAPI_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency support
@@ -78,6 +83,14 @@ class TrainRequest(BaseModel):
     async_run: bool = True
 
 
+class PredictFileRequest(BaseModel):
+    model: str = Field(default="deepfocus")
+    encoder: str = Field(default="r9")
+    file_content: str
+    format: str = Field(default="csv")
+    has_header: bool = Field(default=True)
+
+
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
@@ -95,6 +108,29 @@ def _plain_response(handler: BaseHTTPRequestHandler, status: int, body: bytes, c
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _safe_static_path(request_path: str) -> Path | None:
+    """Resolve a /static/ request path safely, preventing directory traversal."""
+    if not request_path.startswith("/static/"):
+        return None
+    relative = request_path[len("/static/"):]
+    # URL-decode basic percent-encoding for .. safety
+    import urllib.parse
+    relative = urllib.parse.unquote(relative)
+    # Reject absolute paths
+    if relative.startswith("/"):
+        return None
+    static_root = Path("static").resolve()
+    target = (static_root / relative).resolve()
+    # target must be inside static_root and must be a file
+    try:
+        target.relative_to(static_root)
+    except ValueError:
+        return None
+    if not target.exists() or not target.is_file():
+        return None
+    return target
 
 
 def _torch_device(requested: str):
@@ -190,6 +226,7 @@ class ModelRegistry:
             "conmismatch9": "c9",
         }
         self.loaded_from: dict[str, str] = {}
+        self.jobs: dict[str, dict[str, Any]] = {}
 
         if config_paths:
             for config_path in config_paths:
@@ -199,24 +236,33 @@ class ModelRegistry:
         try:
             config = load_config(config_path)
         except FileNotFoundError:
+            print(f"[server] config not found: {config_path}")
             return
-        except Exception:
+        except Exception as exc:
+            print(f"[server] failed to load config {config_path}: {exc}")
             return
 
         model_name = str(config.get("model", "")).lower()
         weights_path = config.get("weights_path")
-        if model_name not in self.models or not weights_path:
+        if model_name not in self.models:
+            print(f"[server] unknown model in config {config_path}: {model_name}")
+            return
+        if not weights_path:
+            print(f"[server] no weights_path in config {config_path}")
             return
 
         weights = Path(weights_path)
         if not weights.exists():
+            print(f"[server] weights not found for {model_name}: {weights_path}")
             return
 
         if weights.suffix in {".pt", ".pth"}:
             try:
                 self.models[model_name] = _load_torch_predictor(model_name, weights, self.device)
                 self.loaded_from[model_name] = str(weights)
-            except Exception:
+                print(f"[server] loaded torch checkpoint for {model_name}: {weights_path}")
+            except Exception as exc:
+                print(f"[server] failed to load torch checkpoint for {model_name} from {weights_path}: {exc}")
                 return
             return
 
@@ -225,7 +271,9 @@ class ModelRegistry:
             state = model_cls.load_state(weights)
             self.models[model_name] = model_cls(state=state)
             self.loaded_from[model_name] = str(weights)
-        except Exception:
+            print(f"[server] loaded legacy weights for {model_name}: {weights_path}")
+        except Exception as exc:
+            print(f"[server] failed to load legacy weights for {model_name} from {weights_path}: {exc}")
             return
 
     def _model_backend(self, model_name: str) -> str:
@@ -233,12 +281,28 @@ class ModelRegistry:
         return str(getattr(model, "model_backend", "legacy_json"))
 
     def health(self) -> dict[str, Any]:
+        available = set(self.models.keys())
+        loaded = set(self.loaded_from.keys())
+        if not loaded:
+            status = "degraded"
+        elif loaded == available:
+            status = "ok"
+        else:
+            status = "partial"
+
+        fallback_active = any(
+            self._model_backend(name) == "legacy_json"
+            for name in sorted(self.models.keys())
+        )
+
         return {
-            "status": "ok",
+            "status": status,
+            "fallback_active": fallback_active,
             "available_encoders": list(self.encoders.keys()),
             "available_models": list(self.models.keys()),
+            "loaded_models": sorted(loaded),
+            "missing_models": sorted(available - loaded),
             "device": self.device,
-            "loaded_models": sorted(self.loaded_from.keys()),
             "model_backends": {
                 name: {
                     "backend": self._model_backend(name),
@@ -261,6 +325,9 @@ class ModelRegistry:
         if expected and encoder_name != expected:
             raise ValueError(f"model {model_name} expects encoder {expected}, got {encoder_name}")
 
+        from utils.sequence import validate_sequence
+        validate_sequence(sgRNA, name="sgRNA", length=23)
+        validate_sequence(dna, name="dna", length=23)
         normalized_on = normalize_sequence(sgRNA, 23)
         normalized_off = normalize_sequence(dna, 23)
         model = self.models[model_name]
@@ -274,8 +341,110 @@ class ModelRegistry:
     def predict_batch(self, model_name: str, encoder_name: str, pairs: list[PairInput]) -> list[dict[str, Any]]:
         return [self.predict(model_name, encoder_name, pair.sgRNA, pair.dna) for pair in pairs]
 
+    def list_models(self) -> dict[str, Any]:
+        return {
+            "models": [
+                {
+                    "name": name,
+                    "encoder": self.expected_pairs.get(name),
+                    "backend": self._model_backend(name),
+                    "loaded": name in self.loaded_from,
+                    "loaded_from": self.loaded_from.get(name),
+                }
+                for name in sorted(self.models.keys())
+            ]
+        }
+
+    def predict_from_file(self, model_name: str, encoder_name: str, file_content: str, fmt: str, has_header: bool) -> dict[str, Any]:
+        model_name = model_name.lower()
+        encoder_name = encoder_name.lower()
+        if model_name not in self.models:
+            raise ValueError(f"unknown model: {model_name}")
+        if encoder_name not in self.encoders:
+            raise ValueError(f"unknown encoder: {encoder_name}")
+        expected = self.expected_pairs.get(model_name)
+        if expected and encoder_name != expected:
+            raise ValueError(f"model {model_name} expects encoder {expected}, got {encoder_name}")
+
+        fmt = fmt.lower().strip()
+        if fmt not in {"csv", "tsv"}:
+            raise ValueError(f"unsupported format: {fmt}; expected csv or tsv")
+
+        delimiter = "\t" if fmt == "tsv" else ","
+        rows = list(csv.reader(io.StringIO(file_content.strip()), delimiter=delimiter))
+        if not rows:
+            raise ValueError("file is empty")
+
+        start_idx = 0
+        sgRNA_idx = 0
+        dna_idx = 1
+        if has_header:
+            header = [h.strip().lower() for h in rows[0]]
+            try:
+                sgRNA_idx = header.index("sgrna")
+            except ValueError:
+                try:
+                    sgRNA_idx = header.index("on")
+                except ValueError:
+                    sgRNA_idx = 0
+            try:
+                dna_idx = header.index("dna")
+            except ValueError:
+                try:
+                    dna_idx = header.index("off")
+                except ValueError:
+                    try:
+                        dna_idx = header.index("off-target")
+                    except ValueError:
+                        dna_idx = 1
+            start_idx = 1
+
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        for i, row in enumerate(rows[start_idx:], start=1):
+            if len(row) < max(sgRNA_idx, dna_idx) + 1:
+                errors.append({"row": i, "error": f"too few columns (got {len(row)}, need at least {max(sgRNA_idx, dna_idx) + 1})"})
+                continue
+            sgRNA = row[sgRNA_idx].strip().upper()
+            dna = row[dna_idx].strip().upper()
+            if not sgRNA:
+                errors.append({"row": i, "error": "sgRNA sequence is empty"})
+                continue
+            if not dna:
+                errors.append({"row": i, "error": "dna sequence is empty"})
+                continue
+            if len(sgRNA) != 23:
+                errors.append({"row": i, "error": f"sgRNA length {len(sgRNA)} != 23"})
+                continue
+            if len(dna) != 23:
+                errors.append({"row": i, "error": f"dna length {len(dna)} != 23"})
+                continue
+            try:
+                pred = self.predict(model_name, encoder_name, sgRNA, dna)
+                pred["row"] = i
+                results.append(pred)
+            except Exception as exc:
+                errors.append({"row": i, "error": str(exc)})
+                continue
+
+        return {
+            "results": results,
+            "total": len(rows) - start_idx,
+            "success": len(results),
+            "failed": len(errors),
+            "errors": errors[:50],
+            "model_used": model_name,
+            "encoder_used": encoder_name,
+        }
+
     def train_from_config(self, config_path: str) -> dict[str, Any]:
+        from utils.config import validate_config
+
         config = load_config(config_path)
+        cfg_errors = validate_config(config)
+        if cfg_errors:
+            raise ValueError("config validation failed:\n  - " + "\n  - ".join(cfg_errors))
+
         model_name = str(config.get("model", "deepfocus")).lower()
         encoder_name = str(config.get("encoder", "r9")).lower()
         if model_name not in self.models:
@@ -345,6 +514,61 @@ class ModelRegistry:
             "weights_path": weights_path,
         }
 
+    def submit_train_job(self, config_path: str, temp_config_path: bool = False) -> dict[str, Any]:
+        job_id = uuid.uuid4().hex
+        self.jobs[job_id] = {
+            "status": "queued",
+            "config_path": config_path,
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "result": None,
+        }
+
+        def _worker():
+            self.jobs[job_id]["status"] = "running"
+            self.jobs[job_id]["started_at"] = time.time()
+            try:
+                result = self.train_from_config(config_path)
+                self.jobs[job_id]["result"] = result
+                self.jobs[job_id]["status"] = "succeeded"
+            except Exception as exc:
+                self.jobs[job_id]["error"] = str(exc)
+                self.jobs[job_id]["status"] = "failed"
+                print(f"[server] job {job_id} failed: {exc}")
+            finally:
+                self.jobs[job_id]["finished_at"] = time.time()
+                if temp_config_path:
+                    try:
+                        Path(config_path).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        return {"status": "queued", "job_id": job_id, "config_path": config_path}
+
+    def get_job(self, job_id: str) -> dict[str, Any]:
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise ValueError(f"unknown job_id: {job_id}")
+        result = {
+            "job_id": job_id,
+            "status": job["status"],
+            "started_at": job["started_at"],
+            "finished_at": job["finished_at"],
+            "error": job["error"],
+        }
+        if job["status"] == "succeeded" and job["result"] is not None:
+            result["result"] = {
+                "model": job["result"].get("model"),
+                "encoder": job["result"].get("encoder"),
+                "train_size": job["result"].get("train_size"),
+                "test_metrics": job["result"].get("test_metrics"),
+                "weights_path": job["result"].get("weights_path"),
+            }
+        return result
+
 
 def _create_handler(registry: ModelRegistry):
     class Handler(BaseHTTPRequestHandler):
@@ -359,6 +583,17 @@ def _create_handler(registry: ModelRegistry):
             if self.path == "/health":
                 _json_response(self, HTTPStatus.OK, registry.health())
                 return
+            if self.path == "/models":
+                _json_response(self, HTTPStatus.OK, registry.list_models())
+                return
+            if self.path.startswith("/jobs/"):
+                job_id = self.path[len("/jobs/"):]
+                try:
+                    result = registry.get_job(job_id)
+                    _json_response(self, HTTPStatus.OK, result)
+                except ValueError as exc:
+                    _json_response(self, HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                return
             if self.path in {"/", "/index.html"}:
                 index_path = Path("static/index.html")
                 if index_path.exists():
@@ -370,19 +605,17 @@ def _create_handler(registry: ModelRegistry):
                         b"CRISPR-DualPred server is running.\n",
                     )
                 return
-            if self.path.startswith("/static/"):
-                relative = self.path[len("/static/") :]
-                static_path = Path("static") / relative
-                if static_path.exists() and static_path.is_file():
-                    content_type = "text/plain; charset=utf-8"
-                    if static_path.suffix == ".html":
-                        content_type = "text/html; charset=utf-8"
-                    elif static_path.suffix == ".js":
-                        content_type = "application/javascript; charset=utf-8"
-                    elif static_path.suffix == ".css":
-                        content_type = "text/css; charset=utf-8"
-                    _plain_response(self, HTTPStatus.OK, static_path.read_bytes(), content_type=content_type)
-                    return
+            safe_path = _safe_static_path(self.path)
+            if safe_path is not None:
+                content_type = "text/plain; charset=utf-8"
+                if safe_path.suffix == ".html":
+                    content_type = "text/html; charset=utf-8"
+                elif safe_path.suffix == ".js":
+                    content_type = "application/javascript; charset=utf-8"
+                elif safe_path.suffix == ".css":
+                    content_type = "text/css; charset=utf-8"
+                _plain_response(self, HTTPStatus.OK, safe_path.read_bytes(), content_type=content_type)
+                return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "not found"})
 
         def do_POST(self):  # noqa: N802
@@ -405,6 +638,15 @@ def _create_handler(registry: ModelRegistry):
                     result = registry.predict_batch(request.model, request.encoder, request.pairs)
                     _json_response(self, HTTPStatus.OK, {"results": result})
                     return
+                if self.path == "/predict/file":
+                    request = PredictFileRequest.model_validate(payload)
+                    start = time.time()
+                    result = registry.predict_from_file(
+                        request.model, request.encoder, request.file_content, request.format, request.has_header
+                    )
+                    result["time_ms"] = int((time.time() - start) * 1000)
+                    _json_response(self, HTTPStatus.OK, result)
+                    return
                 if self.path == "/train":
                     request = TrainRequest.model_validate(payload)
                     config_path = request.config_path or request.config
@@ -422,24 +664,18 @@ def _create_handler(registry: ModelRegistry):
                         Path(config_path).write_text(json.dumps(temp_config, indent=2), encoding="utf-8")
                         temp_config_path = True
                     if request.async_run:
-                        job_id = uuid.uuid4().hex
-
-                        def _worker():
-                            try:
-                                registry.train_from_config(config_path)
-                            finally:
-                                if temp_config_path:
-                                    try:
-                                        Path(config_path).unlink(missing_ok=True)
-                                    except Exception:
-                                        pass
-
-                        thread = threading.Thread(target=_worker, daemon=True)
-                        thread.start()
-                        _json_response(self, HTTPStatus.ACCEPTED, {"status": "queued", "job_id": job_id, "config_path": config_path})
+                        job = registry.submit_train_job(config_path, temp_config_path=temp_config_path)
+                        _json_response(self, HTTPStatus.ACCEPTED, job)
                     else:
-                        result = registry.train_from_config(config_path)
-                        _json_response(self, HTTPStatus.OK, result)
+                        try:
+                            result = registry.train_from_config(config_path)
+                            _json_response(self, HTTPStatus.OK, result)
+                        finally:
+                            if temp_config_path:
+                                try:
+                                    Path(config_path).unlink(missing_ok=True)
+                                except Exception:
+                                    pass
                     return
             except ValidationError as exc:
                 _json_response(self, HTTPStatus.UNPROCESSABLE_ENTITY, {"error": "validation failed", "details": exc.errors()})
@@ -460,7 +696,33 @@ def build_fastapi_app(registry: ModelRegistry):  # pragma: no cover - optional d
     if not FASTAPI_AVAILABLE:
         return None
 
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+
     app = FastAPI(title="CRISPR-DualPred")
+
+    @app.exception_handler(ValueError)
+    def _value_error_handler(request, exc):
+        msg = str(exc).lower()
+        status = 404 if "unknown job_id" in msg else 400
+        return JSONResponse(status_code=status, content={"error": str(exc)})
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
+    )
+    static_dir = Path("static")
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/index.html", response_class=HTMLResponse)
+    def index():
+        index_path = static_dir / "index.html"
+        if index_path.exists():
+            return HTMLResponse(index_path.read_text(encoding="utf-8"))
+        return PlainTextResponse("CRISPR-DualPred server is running.\n")
 
     @app.get("/health")
     def health():
@@ -474,12 +736,30 @@ def build_fastapi_app(registry: ModelRegistry):  # pragma: no cover - optional d
     def predict_batch(request: PredictBatchRequest):
         return {"results": registry.predict_batch(request.model, request.encoder, request.pairs)}
 
+    @app.get("/models")
+    def models():
+        return registry.list_models()
+
+    @app.post("/predict/file")
+    def predict_file(request: PredictFileRequest):
+        start = time.time()
+        result = registry.predict_from_file(
+            request.model, request.encoder, request.file_content, request.format, request.has_header
+        )
+        result["time_ms"] = int((time.time() - start) * 1000)
+        return result
+
+    @app.get("/jobs/{job_id}")
+    def get_job_status(job_id: str):
+        return registry.get_job(job_id)
+
     @app.post("/train")
     def train(request: TrainRequest):
         config_path = request.config_path or request.config
-        if config_path:
-            return registry.train_from_config(config_path)
-        if request.dataset_files and request.model and request.encoder:
+        temp_config_path = False
+        if not config_path:
+            if request.dataset_files is None or request.model is None or request.encoder is None:
+                raise ValueError("train requires config_path or model, encoder, dataset_files")
             temp_config = {
                 "model": request.model,
                 "encoder": request.encoder,
@@ -488,8 +768,20 @@ def build_fastapi_app(registry: ModelRegistry):  # pragma: no cover - optional d
             }
             config_path = f"/tmp/{uuid.uuid4().hex}.json"
             Path(config_path).write_text(json.dumps(temp_config, indent=2), encoding="utf-8")
-            return registry.train_from_config(config_path)
-        raise ValueError("train requires config_path or model, encoder, dataset_files")
+            temp_config_path = True
+
+        if request.async_run:
+            return registry.submit_train_job(config_path, temp_config_path=temp_config_path)
+
+        try:
+            result = registry.train_from_config(config_path)
+            return result
+        finally:
+            if temp_config_path:
+                try:
+                    Path(config_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     return app
 

@@ -1,0 +1,2040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRISPR-DualPred Off-Target Prediction</title>
+<style>
+:root {
+  --primary: #1a5276;
+  --primary-dark: #15425f;
+  --secondary: #5d6d7e;
+  --bg: #ffffff;
+  --bg-soft: #f8f9fa;
+  --bg-blue: #eef5f9;
+  --border: #dee2e6;
+  --border-strong: #c7d0d8;
+  --text: #1f2933;
+  --muted: #5d6d7e;
+  --danger: #a94442;
+  --danger-bg: #fff1f1;
+  --warning: #8a6414;
+  --warning-bg: #fff8df;
+  --success: #2f6f4e;
+  --success-bg: #eef8f1;
+  --radius: 3px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg-soft);
+  line-height: 1.45;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: inherit;
+}
+
+.topbar {
+  height: 56px;
+  background: var(--primary);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 32px;
+}
+
+.brand {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex: 0 0 auto;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.topbar-note {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.topbar-right a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.app {
+  width: min(1280px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 28px 0 46px;
+}
+
+.workspace-header {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(560px, 2fr);
+  gap: 24px;
+  align-items: stretch;
+  margin-bottom: 22px;
+}
+
+.title-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 18px 20px;
+}
+
+.title-block h1 {
+  margin: 0 0 6px;
+  color: var(--primary);
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.title-block p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.15fr;
+  gap: 12px;
+}
+
+.status-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 14px 14px 12px;
+  min-width: 0;
+}
+
+.status-label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status-value {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.status-value.ok {
+  color: var(--success);
+}
+
+.status-value.partial,
+.status-value.degraded,
+.status-value.fallback {
+  color: var(--warning);
+}
+
+.status-value.offline,
+.status-value.error {
+  color: var(--danger);
+}
+
+.status-detail {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.api-base-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.api-base-row input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.api-base-row input:focus {
+  border-color: var(--primary);
+  outline: 2px solid rgba(26, 82, 118, 0.18);
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 40%) minmax(0, 60%);
+  gap: 22px;
+  align-items: start;
+}
+
+.column {
+  display: grid;
+  gap: 18px;
+}
+
+.panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 18px 20px 20px;
+}
+
+.panel h2 {
+  margin: 0 0 15px;
+  padding-left: 10px;
+  border-left: 4px solid var(--primary);
+  color: var(--primary);
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.panel h3 {
+  margin: 18px 0 10px;
+  color: var(--primary);
+  font-size: 14px;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field label,
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field input[type="text"],
+.field select,
+.field textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.field input[type="text"],
+.field select {
+  height: 40px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field textarea {
+  min-height: 154px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--primary);
+  outline: 2px solid rgba(26, 82, 118, 0.18);
+}
+
+.field input.invalid,
+.field textarea.invalid {
+  border-color: var(--danger);
+  background: #fff8f8;
+}
+
+.hint,
+.field-error {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.hint {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.field-error {
+  display: none;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.field-error.visible {
+  display: block;
+}
+
+.mono,
+textarea.mono,
+input.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  letter-spacing: 0;
+}
+
+.model-detail-box,
+.notice,
+.result-box {
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  padding: 12px;
+  font-size: 13px;
+}
+
+.notice {
+  margin-top: 12px;
+}
+
+.notice.warning {
+  border-color: #ead6a5;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.notice.error {
+  border-color: #e6b4b4;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.notice.success {
+  border-color: #bdd9c5;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.model-meta {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 5px 8px;
+}
+
+.model-meta dt {
+  color: var(--secondary);
+  font-weight: 700;
+}
+
+.model-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.result-banner {
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.result-banner.success {
+  border-color: #bdd9c5;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.result-banner.error {
+  border-color: #e6b4b4;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.button-row.between {
+  justify-content: space-between;
+}
+
+.button-row.between > div {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 7px 16px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.btn-sm {
+  min-height: 34px;
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
+.btn-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled),
+.btn-primary:focus-visible:not(:disabled) {
+  border-color: var(--primary-dark);
+  background: var(--primary-dark);
+  outline: none;
+}
+
+.btn-secondary {
+  border-color: var(--border-strong);
+  background: var(--bg);
+  color: var(--secondary);
+}
+
+.btn-secondary:hover:not(:disabled),
+.btn-secondary:focus-visible:not(:disabled) {
+  border-color: var(--secondary);
+  outline: none;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+}
+
+.probability {
+  display: grid;
+  gap: 8px;
+}
+
+.probability-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.probability-value {
+  color: var(--primary);
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.risk-badge.low {
+  border-color: #bdd9c5;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.risk-badge.medium {
+  border-color: #ead6a5;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.risk-badge.high {
+  border-color: #e6b4b4;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.bar {
+  width: 100%;
+  height: 12px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.bar-fill {
+  width: 0%;
+  height: 100%;
+  background: var(--primary);
+}
+
+.bar-fill.low {
+  background: var(--success);
+}
+
+.bar-fill.medium {
+  background: #c58b22;
+}
+
+.bar-fill.high {
+  background: var(--danger);
+}
+
+.result-meta {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.backend-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border-radius: var(--radius);
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.backend-chip.fallback {
+  border: 1px solid #ead6a5;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.backend-chip.loaded {
+  border: 1px solid #bdd9c5;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.backend-chip.not-loaded {
+  border: 1px solid #e6b4b4;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.tab {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--secondary);
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.tab.active {
+  border-bottom-color: var(--primary);
+  color: var(--primary);
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+.drop-zone {
+  border: 1.5px dashed var(--primary);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  padding: 26px 18px;
+  text-align: center;
+}
+
+.drop-zone.dragging,
+.drop-zone:hover {
+  border-style: solid;
+  background: var(--bg-blue);
+}
+
+.drop-zone:focus-visible {
+  outline: 2px solid rgba(26, 82, 118, 0.22);
+  outline-offset: 2px;
+}
+
+.drop-zone p {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.drop-zone small {
+  color: var(--muted);
+}
+
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.inline-options {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.inline-options input {
+  accent-color: var(--primary);
+}
+
+.batch-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 16px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+th,
+td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--bg-soft);
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr.row-low td {
+  background: var(--success-bg);
+}
+
+tbody tr.row-high td {
+  background: var(--danger-bg);
+}
+
+td.seq {
+  max-width: 260px;
+  word-break: break-all;
+}
+
+.empty-state {
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.errors-panel {
+  margin-top: 16px;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--muted);
+  padding: 18px 24px 22px;
+  font-size: 12px;
+}
+
+.footer-inner {
+  width: min(1280px, calc(100% - 48px));
+  margin: 0 auto;
+}
+
+.footer p {
+  margin: 4px 0;
+}
+
+@media (max-width: 980px) {
+  .workspace-header,
+  .tool-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    height: auto;
+    padding: 10px 16px;
+    gap: 8px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .brand {
+    font-size: 13px;
+  }
+
+  .topbar-right {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 10px;
+    font-size: 12px;
+    white-space: normal;
+  }
+
+  .app,
+  .footer-inner {
+    width: min(100% - 28px, 1280px);
+  }
+
+  .app {
+    padding-top: 18px;
+  }
+
+  .panel,
+  .title-block,
+  .status-card {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .tabs {
+    overflow-x: auto;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+  }
+}
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">CRISPR-DualPred</div>
+    <div class="topbar-right">
+      <a href="#usage-notes">Usage notes</a>
+      <span class="topbar-note">Prediction only</span>
+    </div>
+  </header>
+
+  <main class="app">
+    <section class="workspace-header" aria-label="Application status">
+      <div class="title-block">
+        <h1>Off-Target Prediction</h1>
+        <p>Predict sgRNA-DNA off-target probability with the currently available backend models.</p>
+      </div>
+
+      <div class="status-grid">
+        <div class="status-card">
+          <span class="status-label">Backend</span>
+          <strong id="backend-status" class="status-value offline">Checking</strong>
+          <span id="backend-detail" class="status-detail">Calling /health...</span>
+        </div>
+        <div class="status-card">
+          <span class="status-label">Models</span>
+          <strong id="models-status" class="status-value offline">Checking</strong>
+          <span id="models-detail" class="status-detail">Calling /models...</span>
+        </div>
+        <div class="status-card">
+          <label class="status-label" for="api-base">API Base</label>
+          <div class="api-base-row">
+            <input id="api-base" type="text" spellcheck="false" placeholder="same origin">
+            <button id="refresh-status" class="btn btn-secondary btn-sm" type="button">Refresh</button>
+          </div>
+          <span class="status-detail">Use blank for same-origin hosting.</span>
+        </div>
+      </div>
+    </section>
+
+    <div id="global-notice" class="notice warning" role="status" aria-live="polite"></div>
+
+    <section class="tool-grid" aria-label="Prediction workspace">
+      <div class="column">
+        <section class="panel" aria-labelledby="model-heading">
+          <h2 id="model-heading">Model Selection</h2>
+          <div class="field">
+            <label for="model-select">Available model</label>
+            <select id="model-select" disabled>
+              <option value="">Loading models...</option>
+            </select>
+          </div>
+          <div id="selected-model-detail" class="model-detail-box">No model metadata loaded yet.</div>
+        </section>
+
+        <section class="panel" aria-labelledby="single-heading">
+          <h2 id="single-heading">Single Prediction</h2>
+          <div class="field">
+            <label for="single-sgrna">sgRNA sequence</label>
+            <input id="single-sgrna" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="GAGTCCGAGCAGAAGAAGAAGAA">
+            <div id="single-sgrna-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label for="single-dna">DNA sequence</label>
+            <input id="single-dna" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="GAGTCCGAGCAGAAGAAGAAGAT">
+            <div id="single-dna-error" class="field-error"></div>
+            <div class="hint">Sequences must be 23nt and contain only A, T, C, G, or U. U is sent as T.</div>
+          </div>
+          <div class="button-row">
+            <button id="single-example" class="btn btn-secondary" type="button">Use Example</button>
+            <button id="single-submit" class="btn btn-primary" type="button" disabled>Predict</button>
+          </div>
+
+          <div id="single-result" class="result-box" hidden aria-live="polite" aria-atomic="true">
+            <div id="single-backend-banner" class="result-banner" hidden></div>
+            <div class="probability">
+              <div class="probability-head">
+                <span id="single-probability" class="probability-value">0.0%</span>
+                <span id="single-risk" class="risk-badge low">low</span>
+              </div>
+              <div class="bar" aria-hidden="true"><div id="single-bar" class="bar-fill low"></div></div>
+            </div>
+            <div id="single-meta" class="result-meta"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="column">
+        <section class="panel" aria-labelledby="batch-heading">
+          <h2 id="batch-heading">Batch Prediction</h2>
+
+          <div class="tabs" role="tablist" aria-label="Batch input mode">
+            <button id="tab-text" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-text" data-tab="text">Text Input</button>
+            <button id="tab-file" class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-file" data-tab="file">File Upload</button>
+          </div>
+
+          <div id="panel-text" class="tab-panel active" role="tabpanel" aria-labelledby="tab-text">
+            <div class="field">
+              <label for="batch-text">Sequence pairs</label>
+              <textarea id="batch-text" class="mono" spellcheck="false" placeholder="Optional header: sgRNA,dna&#10;GAGTCCGAGCAGAAGAAGAAGAA,GAGTCCGAGCAGAAGAAGAAGAT"></textarea>
+              <div class="hint">One pair per line. Optional headers such as sgRNA,dna, on,off, or on,off-target are accepted.</div>
+            </div>
+          </div>
+
+          <div id="panel-file" class="tab-panel" role="tabpanel" aria-labelledby="tab-file">
+            <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Choose a batch file">
+              <p>Drop CSV / TSV / TXT file here</p>
+              <small>Expected columns: sgRNA,dna. Header names sgRNA,dna, on,off, or on,off-target are accepted, and CSV/TSV is auto-detected from content.</small>
+              <div class="button-row" style="justify-content:center">
+                <button id="choose-file" class="btn btn-secondary" type="button">Choose File</button>
+              </div>
+            </div>
+            <input id="file-input" class="file-input" type="file" accept=".csv,.tsv,.txt">
+            <div class="inline-options">
+              <label><input id="file-has-header" type="checkbox" checked> File has header</label>
+              <span id="file-name" class="hint">No file selected.</span>
+            </div>
+          </div>
+
+          <div class="button-row between">
+            <div>
+              <button id="batch-submit" class="btn btn-primary" type="button" disabled>Run Batch Prediction</button>
+              <button id="clear-batch" class="btn btn-secondary" type="button">Clear</button>
+            </div>
+            <button id="export-results" class="btn btn-secondary" type="button" disabled>Export CSV</button>
+          </div>
+
+          <div class="batch-summary" aria-live="polite" aria-atomic="true">
+            <span id="batch-summary">No batch results yet.</span>
+            <span id="batch-page-summary"></span>
+          </div>
+
+          <div id="results-empty" class="empty-state" aria-live="polite">Successful batch predictions will appear here with the original sgRNA and DNA inputs preserved.</div>
+          <div id="results-table-wrap" class="table-wrap" hidden aria-live="polite">
+            <table>
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>sgRNA</th>
+                  <th>DNA</th>
+                  <th>Probability</th>
+                  <th>Risk</th>
+                  <th>Backend</th>
+                </tr>
+              </thead>
+              <tbody id="results-body"></tbody>
+            </table>
+          </div>
+          <div id="pagination" class="pagination" hidden>
+            <button id="prev-page" class="btn btn-secondary btn-sm" type="button">Previous</button>
+            <span id="page-label"></span>
+            <button id="next-page" class="btn btn-secondary btn-sm" type="button">Next</button>
+          </div>
+
+          <div id="errors-panel" class="errors-panel" hidden aria-live="polite">
+            <h3>Failed Rows</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data row</th>
+                    <th>File line</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="errors-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="usage-notes" class="panel" aria-labelledby="notes-heading">
+          <h2 id="notes-heading">Usage Notes</h2>
+          <p class="hint">Example 23nt sgRNA: <span class="mono">GAGTCCGAGCAGAAGAAGAAGAA</span></p>
+          <p class="hint">This interface is prediction-only. Training APIs exist on the backend, but they are not exposed here. If no trained checkpoint is loaded, the interface labels predictions as fallback instead of presenting them as production model output.</p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 CRISPR-DualPred Project. Institute of Bioinformatics.</p>
+      <p>Root path serves this interface; static assets are available under /static/ when the backend is running.</p>
+    </div>
+  </footer>
+
+<script>
+(function () {
+  "use strict";
+
+  const EXAMPLE_SGRNA = "GAGTCCGAGCAGAAGAAGAAGAA";
+  const EXAMPLE_DNA = "GAGTCCGAGCAGAAGAAGAAGAT";
+  const PAGE_SIZE = 50;
+
+  const state = {
+    health: null,
+    models: [],
+    selectedModel: null,
+    activeTab: "text",
+    selectedFile: null,
+    batchResults: [],
+    batchErrors: [],
+    page: 0,
+    loadingStatus: false,
+    busy: false
+  };
+
+  const els = {
+    apiBase: document.getElementById("api-base"),
+    refreshStatus: document.getElementById("refresh-status"),
+    backendStatus: document.getElementById("backend-status"),
+    backendDetail: document.getElementById("backend-detail"),
+    modelsStatus: document.getElementById("models-status"),
+    modelsDetail: document.getElementById("models-detail"),
+    notice: document.getElementById("global-notice"),
+    modelSelect: document.getElementById("model-select"),
+    selectedModelDetail: document.getElementById("selected-model-detail"),
+    singleSgrna: document.getElementById("single-sgrna"),
+    singleDna: document.getElementById("single-dna"),
+    singleSgrnaError: document.getElementById("single-sgrna-error"),
+    singleDnaError: document.getElementById("single-dna-error"),
+    singleExample: document.getElementById("single-example"),
+    singleSubmit: document.getElementById("single-submit"),
+    singleResult: document.getElementById("single-result"),
+    singleBackendBanner: document.getElementById("single-backend-banner"),
+    singleProbability: document.getElementById("single-probability"),
+    singleRisk: document.getElementById("single-risk"),
+    singleBar: document.getElementById("single-bar"),
+    singleMeta: document.getElementById("single-meta"),
+    tabs: Array.from(document.querySelectorAll(".tab")),
+    textPanel: document.getElementById("panel-text"),
+    filePanel: document.getElementById("panel-file"),
+    batchText: document.getElementById("batch-text"),
+    dropZone: document.getElementById("drop-zone"),
+    chooseFile: document.getElementById("choose-file"),
+    fileInput: document.getElementById("file-input"),
+    fileHasHeader: document.getElementById("file-has-header"),
+    fileName: document.getElementById("file-name"),
+    batchSubmit: document.getElementById("batch-submit"),
+    clearBatch: document.getElementById("clear-batch"),
+    exportResults: document.getElementById("export-results"),
+    batchSummary: document.getElementById("batch-summary"),
+    batchPageSummary: document.getElementById("batch-page-summary"),
+    resultsEmpty: document.getElementById("results-empty"),
+    resultsWrap: document.getElementById("results-table-wrap"),
+    resultsBody: document.getElementById("results-body"),
+    pagination: document.getElementById("pagination"),
+    prevPage: document.getElementById("prev-page"),
+    nextPage: document.getElementById("next-page"),
+    pageLabel: document.getElementById("page-label"),
+    errorsPanel: document.getElementById("errors-panel"),
+    errorsBody: document.getElementById("errors-body")
+  };
+
+  function initialApiBase() {
+    if (window.location.protocol === "file:") {
+      return "http://127.0.0.1:8000";
+    }
+    return "";
+  }
+
+  function apiBase() {
+    return els.apiBase.value.trim().replace(/\/+$/, "");
+  }
+
+  function apiUrl(path) {
+    return apiBase() + path;
+  }
+
+  function setStatusValue(el, text, type) {
+    el.textContent = text;
+    el.className = "status-value " + type;
+  }
+
+  function setNotice(message, type) {
+    els.notice.textContent = message;
+    els.notice.className = "notice " + (type || "warning");
+  }
+
+  function escapeHtml(value) {
+    const div = document.createElement("div");
+    div.textContent = value == null ? "" : String(value);
+    return div.innerHTML;
+  }
+
+  function normalizeHeaderToken(value) {
+    return String(value == null ? "" : value).trim().toLowerCase().replace(/[\s_]+/g, "");
+  }
+
+  function isSupportedBatchHeaderRow(parts) {
+    if (!parts || parts.length < 2) return false;
+    const first = normalizeHeaderToken(parts[0]);
+    const second = normalizeHeaderToken(parts[1]);
+    return (first === "sgrna" || first === "on") && (second === "dna" || second === "off" || second === "off-target");
+  }
+
+  function formatApiLocation(loc) {
+    if (loc == null) return "";
+    const parts = Array.isArray(loc) ? loc : String(loc).split(".");
+    return parts
+      .map(function (part) {
+        return String(part == null ? "" : part).trim();
+      })
+      .filter(function (part) {
+        return part && part !== "body" && part !== "query" && part !== "path" && part !== "header";
+      })
+      .join(".");
+  }
+
+  function formatApiDetailItem(item) {
+    if (item == null) return "";
+    if (typeof item === "string") return item.trim();
+    if (Array.isArray(item)) {
+      return item.map(formatApiDetailItem).filter(Boolean).join("; ");
+    }
+    if (typeof item !== "object") return String(item);
+
+    if (Array.isArray(item.errors)) {
+      return item.errors.map(formatApiDetailItem).filter(Boolean).join("; ");
+    }
+
+    if (item.detail != null && typeof item.msg !== "string" && typeof item.message !== "string" && typeof item.error !== "string" && typeof item.reason !== "string") {
+      const nested = formatApiDetail(item.detail);
+      if (nested) return nested;
+    }
+
+    const location = formatApiLocation(item.loc || item.path || item.field || item.pointer);
+    const message = item.msg || item.message || item.error || item.reason || item.detail || "";
+    const text = String(message == null ? "" : message).trim();
+
+    if (location && text) return location + ": " + text;
+    if (text) return text;
+    if (location) return location;
+
+    try {
+      return JSON.stringify(item);
+    } catch (error) {
+      return String(item);
+    }
+  }
+
+  function formatApiDetail(detail) {
+    if (detail == null) return "";
+    if (typeof detail === "string") return detail.trim();
+    if (Array.isArray(detail)) {
+      return detail.map(formatApiDetailItem).filter(Boolean).join("; ");
+    }
+    if (typeof detail === "object") {
+      if (Array.isArray(detail.errors)) {
+        return detail.errors.map(formatApiDetailItem).filter(Boolean).join("; ");
+      }
+      if (detail.detail != null && detail.detail !== detail) {
+        const nested = formatApiDetail(detail.detail);
+        if (nested) return nested;
+      }
+      return formatApiDetailItem(detail);
+    }
+    return String(detail);
+  }
+
+  function formatResponseError(data, response) {
+    const parts = [];
+
+    if (data && typeof data === "object") {
+      const error = formatApiDetail(data.error);
+      const message = formatApiDetail(data.message);
+      const detail = formatApiDetail(data.detail);
+
+      if (error) parts.push(error);
+      if (message && message !== error) parts.push(message);
+      if (detail && detail !== error && detail !== message) parts.push(detail);
+    } else if (typeof data === "string" && data.trim()) {
+      parts.push(data.trim());
+    }
+
+    if (parts.length === 0) {
+      parts.push("HTTP " + response.status + (response.statusText ? " " + response.statusText : ""));
+    }
+
+    return parts.join("; ");
+  }
+
+  function normalizeSeq(seq) {
+    return seq.trim().toUpperCase().replace(/U/g, "T");
+  }
+
+  function validateSeq(seq) {
+    const raw = seq.trim();
+    if (!raw) return "Sequence is required.";
+    if (!/^[ATCGUatcgu]+$/.test(raw)) return "Use only A, T, C, G, or U.";
+    if (raw.length !== 23) return "Expected 23nt, got " + raw.length + ".";
+    return "";
+  }
+
+  function riskFromProbability(probability) {
+    if (probability >= 0.7) return "high";
+    if (probability >= 0.3) return "medium";
+    return "low";
+  }
+
+  function normalizedRisk(risk, probability) {
+    const value = String(risk || "").toLowerCase();
+    if (value === "low" || value === "medium" || value === "high") return value;
+    return riskFromProbability(probability);
+  }
+
+  function probabilityOf(result) {
+    const value = result.off_target_prob != null ? result.off_target_prob : result.off_target_probability != null ? result.off_target_probability : result.probability != null ? result.probability : 0;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  async function readJsonResponse(response) {
+    const data = await response.json().catch(function () {
+      return {};
+    });
+    if (!response.ok) {
+      throw new Error(formatResponseError(data, response));
+    }
+    return data;
+  }
+
+  async function apiGet(path) {
+    const response = await fetch(apiUrl(path));
+    return readJsonResponse(response);
+  }
+
+  async function apiPost(path, body) {
+    const response = await fetch(apiUrl(path), {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    return readJsonResponse(response);
+  }
+
+  function modelMode(model) {
+    if (!model) return "unknown";
+    if (model.loaded) return "loaded";
+    const backend = String(model.backend || "").toLowerCase();
+    if (backend.includes("legacy") || backend.includes("fallback")) return "fallback";
+    return "not_loaded";
+  }
+
+  function modelLabel(model) {
+    const mode = modelMode(model);
+    const suffix = mode === "loaded" ? "loaded checkpoint" : mode === "fallback" ? "fallback smoke-test" : "not loaded";
+    return model.name + " / " + (model.encoder || "?") + " · " + suffix;
+  }
+
+  function isFallbackBackend(backend) {
+    const value = String(backend || "").toLowerCase();
+    return value.indexOf("legacy") !== -1 || value.indexOf("fallback") !== -1;
+  }
+
+  function backendDisplayText(backend, mode) {
+    const value = backend || "unknown";
+    if (mode === "loaded") return value;
+    if (mode === "fallback" || isFallbackBackend(value)) return value + " (fallback smoke-test)";
+    if (mode === "not_loaded") return value + " (not loaded)";
+    return value;
+  }
+
+  function selectedModel() {
+    const value = els.modelSelect.value;
+    return state.models.find(function (model) {
+      return model.name + "|" + (model.encoder || "") === value;
+    }) || null;
+  }
+
+  function renderHealth() {
+    if (!state.health) {
+      setStatusValue(els.backendStatus, "Offline", "offline");
+      els.backendDetail.textContent = "Could not reach /health.";
+      return;
+    }
+
+    const status = String(state.health.status || "unknown").toLowerCase();
+    const loaded = state.health.loaded_models || [];
+    const missing = state.health.missing_models || [];
+    const device = state.health.device || "unknown";
+
+    if (status === "ok") {
+      setStatusValue(els.backendStatus, "OK", "ok");
+      els.backendDetail.textContent = "All advertised models loaded on " + device + ".";
+    } else if (status === "partial") {
+      setStatusValue(els.backendStatus, "Partial", "partial");
+      els.backendDetail.textContent = "Loaded: " + (loaded.join(", ") || "none") + "; missing: " + (missing.join(", ") || "none") + ".";
+    } else if (status === "degraded") {
+      setStatusValue(els.backendStatus, "Degraded", "degraded");
+      els.backendDetail.textContent = "No trained weights loaded; fallback backends may still answer requests.";
+    } else {
+      setStatusValue(els.backendStatus, status || "Unknown", "warning");
+      els.backendDetail.textContent = "Device: " + device + ".";
+    }
+  }
+
+  function renderModels() {
+    els.modelSelect.innerHTML = "";
+
+    if (state.models.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No models returned by /models";
+      els.modelSelect.appendChild(option);
+      els.modelSelect.disabled = true;
+      setStatusValue(els.modelsStatus, "Unavailable", "error");
+      els.modelsDetail.textContent = "No selectable model metadata was returned.";
+      renderSelectedModelDetail();
+      return;
+    }
+
+    state.models.forEach(function (model) {
+      const option = document.createElement("option");
+      option.value = model.name + "|" + (model.encoder || "");
+      option.textContent = modelLabel(model);
+      option.title = model.name + " | encoder: " + (model.encoder || "?") + " | backend: " + (model.backend || "unknown");
+      els.modelSelect.appendChild(option);
+    });
+
+    const previouslySelected = state.selectedModel ? state.selectedModel.name + "|" + (state.selectedModel.encoder || "") : "";
+    if (previouslySelected && state.models.some(function (model) { return model.name + "|" + (model.encoder || "") === previouslySelected; })) {
+      els.modelSelect.value = previouslySelected;
+    }
+
+    if (!els.modelSelect.value) {
+      els.modelSelect.value = state.models[0].name + "|" + (state.models[0].encoder || "");
+    }
+
+    state.selectedModel = selectedModel();
+    els.modelSelect.disabled = false;
+
+    const loadedCount = state.models.filter(function (model) { return model.loaded; }).length;
+    const fallbackCount = state.models.filter(function (model) { return modelMode(model) === "fallback"; }).length;
+
+    if (loadedCount === state.models.length) {
+      setStatusValue(els.modelsStatus, "Loaded", "ok");
+      els.modelsDetail.textContent = loadedCount + " model(s) loaded with checkpoints.";
+    } else if (loadedCount > 0) {
+      setStatusValue(els.modelsStatus, "Partial", "partial");
+      els.modelsDetail.textContent = loadedCount + " loaded, " + (state.models.length - loadedCount) + " fallback/not loaded.";
+    } else if (fallbackCount > 0) {
+      setStatusValue(els.modelsStatus, "Fallback", "fallback");
+      els.modelsDetail.textContent = "No checkpoints loaded; " + fallbackCount + " fallback model(s) selectable.";
+    } else {
+      setStatusValue(els.modelsStatus, "Not loaded", "error");
+      els.modelsDetail.textContent = "Models are advertised but no usable fallback was identified.";
+    }
+
+    renderSelectedModelDetail();
+  }
+
+  function renderSelectedModelDetail() {
+    const model = selectedModel();
+    state.selectedModel = model;
+
+    if (!model) {
+      els.selectedModelDetail.textContent = "No model selected.";
+      updateActionState();
+      return;
+    }
+
+    const mode = modelMode(model);
+    const modeLabel = mode === "loaded" ? "Loaded checkpoint" : mode === "fallback" ? "Fallback smoke-test" : "Not loaded";
+    const loadedFrom = model.loaded_from || "None";
+    els.selectedModelDetail.innerHTML = [
+      "<dl class=\"model-meta\">",
+      "<dt>Model</dt><dd>" + escapeHtml(model.name) + "</dd>",
+      "<dt>Encoder</dt><dd>" + escapeHtml(model.encoder || "?") + "</dd>",
+      "<dt>Mode</dt><dd>" + escapeHtml(modeLabel) + "</dd>",
+      "<dt>Backend</dt><dd>" + escapeHtml(model.backend || "unknown") + "</dd>",
+      "<dt>Weights</dt><dd>" + escapeHtml(loadedFrom) + "</dd>",
+      "</dl>"
+    ].join("");
+
+    if (mode === "loaded") {
+      setNotice("Backend is reachable. Selected model is loaded from checkpoint: " + loadedFrom + ".", "success");
+    } else if (mode === "fallback") {
+      setNotice("Fallback smoke-test mode: selected model has no loaded checkpoint and is using " + (model.backend || "fallback") + ". Treat predictions as smoke-test output until real weights are loaded.", "warning");
+    } else {
+      setNotice("Selected model is not loaded. Requests may fail unless the backend provides a compatible fallback.", "error");
+    }
+
+    updateActionState();
+  }
+
+  function updateActionState() {
+    const apiReady = !!state.health && state.models.length > 0 && !state.loadingStatus;
+    const modelReady = !!selectedModel();
+    const disabled = !apiReady || !modelReady || state.busy;
+    els.singleSubmit.disabled = disabled;
+    els.batchSubmit.disabled = disabled;
+    els.exportResults.disabled = state.batchResults.length === 0;
+    els.singleSubmit.setAttribute("aria-busy", state.busy ? "true" : "false");
+    els.batchSubmit.setAttribute("aria-busy", state.busy ? "true" : "false");
+  }
+
+  async function refreshStatus() {
+    state.loadingStatus = true;
+    updateActionState();
+    setStatusValue(els.backendStatus, "Checking", "offline");
+    setStatusValue(els.modelsStatus, "Checking", "offline");
+    els.backendDetail.textContent = "Calling /health...";
+    els.modelsDetail.textContent = "Calling /models...";
+
+    const results = await Promise.allSettled([apiGet("/health"), apiGet("/models")]);
+    if (results[0].status === "fulfilled") {
+      state.health = results[0].value;
+    } else {
+      state.health = null;
+      setNotice("Backend offline or blocked by CORS: " + results[0].reason.message, "error");
+    }
+
+    if (results[1].status === "fulfilled") {
+      state.models = Array.isArray(results[1].value.models) ? results[1].value.models : [];
+    } else {
+      state.models = [];
+      setNotice("Could not load /models: " + results[1].reason.message, "error");
+    }
+
+    state.loadingStatus = false;
+    renderHealth();
+    renderModels();
+    updateActionState();
+  }
+
+  function validateSingleInputs() {
+    const sgrnaError = validateSeq(els.singleSgrna.value);
+    const dnaError = validateSeq(els.singleDna.value);
+    renderInputError(els.singleSgrna, els.singleSgrnaError, sgrnaError);
+    renderInputError(els.singleDna, els.singleDnaError, dnaError);
+    return !sgrnaError && !dnaError;
+  }
+
+  function renderInputError(input, errorEl, message) {
+    input.classList.toggle("invalid", !!message);
+    input.setAttribute("aria-invalid", message ? "true" : "false");
+    errorEl.textContent = message;
+    errorEl.classList.toggle("visible", !!message);
+  }
+
+  function requestModelPayload() {
+    const model = selectedModel();
+    if (!model) throw new Error("No model selected.");
+    return {
+      model: model.name,
+      encoder: model.encoder || ""
+    };
+  }
+
+  async function runSinglePrediction() {
+    if (!validateSingleInputs()) return;
+    const model = requestModelPayload();
+    const sgRNA = normalizeSeq(els.singleSgrna.value);
+    const dna = normalizeSeq(els.singleDna.value);
+
+    state.busy = true;
+    els.singleSubmit.textContent = "Predicting...";
+    updateActionState();
+
+    try {
+      const result = await apiPost("/predict", {
+        sgRNA: sgRNA,
+        dna: dna,
+        model: model.model,
+        encoder: model.encoder
+      });
+      renderSingleResult(Object.assign({}, result, {sgRNA: sgRNA, dna: dna}));
+    } catch (error) {
+      setNotice("Single prediction failed: " + error.message, "error");
+    } finally {
+      state.busy = false;
+      els.singleSubmit.textContent = "Predict";
+      updateActionState();
+    }
+  }
+
+  function renderSingleResult(result) {
+    const probability = probabilityOf(result);
+    const risk = normalizedRisk(result.risk_level, probability);
+    const pct = Math.max(0, Math.min(100, probability * 100));
+    const currentModel = selectedModel();
+    const modelName = currentModel ? currentModel.name : "unknown";
+    const encoderName = currentModel ? currentModel.encoder : "unknown";
+    const backendName = currentModel ? currentModel.backend : "unknown";
+    const backendValue = result.model_backend || result.backend || backendName || "unknown";
+    const mode = currentModel ? modelMode(currentModel) : "unknown";
+    const fallback = isFallbackBackend(backendValue) || mode === "fallback";
+    const bannerText = fallback ? "Fallback smoke-test: " + backendValue + " backend. This result is not from a production checkpoint." : mode === "not_loaded" ? "Selected model is not loaded. Predictions may be smoke-test output or fail." : "";
+
+    els.singleResult.hidden = false;
+    els.singleBackendBanner.textContent = bannerText;
+    els.singleBackendBanner.hidden = !bannerText;
+    els.singleBackendBanner.className = "result-banner " + (fallback ? "" : mode === "not_loaded" ? "error" : "success");
+    els.singleProbability.textContent = pct.toFixed(2) + "%";
+    els.singleRisk.textContent = risk;
+    els.singleRisk.className = "risk-badge " + risk;
+    els.singleBar.style.width = pct.toFixed(2) + "%";
+    els.singleBar.className = "bar-fill " + risk;
+    els.singleMeta.textContent = [
+      "sgRNA " + result.sgRNA,
+      "DNA " + result.dna,
+      "model " + (result.model_used || modelName),
+      "encoder " + (result.encoder_used || encoderName),
+      "backend " + backendDisplayText(backendValue, mode)
+    ].join(" | ");
+  }
+
+  function parseDelimitedLine(line, delimiter) {
+    const cells = [];
+    let current = "";
+    let quoted = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (ch === "\"") {
+        if (quoted && line[i + 1] === "\"") {
+          current += "\"";
+          i += 1;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (ch === delimiter && !quoted) {
+        cells.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+    cells.push(current);
+    return cells;
+  }
+
+  function validatePair(sgRNA, dna) {
+    const sgrnaError = validateSeq(sgRNA);
+    if (sgrnaError) return "sgRNA: " + sgrnaError;
+    const dnaError = validateSeq(dna);
+    if (dnaError) return "DNA: " + dnaError;
+    return "";
+  }
+
+  function parseTextBatch(raw) {
+    const pairs = [];
+    const errors = [];
+    const lines = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    let headerLineIndex = -1;
+    let headerDetected = false;
+
+    for (let i = 0; i < lines.length; i += 1) {
+      if (lines[i].trim()) {
+        headerLineIndex = i;
+        break;
+      }
+    }
+
+    if (headerLineIndex !== -1) {
+      const delimiter = lines[headerLineIndex].includes("\t") ? "\t" : ",";
+      const headerParts = parseDelimitedLine(lines[headerLineIndex], delimiter);
+      headerDetected = isSupportedBatchHeaderRow(headerParts);
+    }
+
+    lines.forEach(function (line, index) {
+      const lineNumber = index + 1;
+      if (!line.trim()) return;
+      if (headerDetected && index === headerLineIndex) return;
+      const delimiter = line.includes("\t") ? "\t" : ",";
+      const parts = parseDelimitedLine(line, delimiter);
+      if (parts.length < 2) {
+        errors.push({row: lineNumber, line_number: lineNumber, error: "Expected sgRNA,dna columns."});
+        return;
+      }
+      const sgRNA = parts[0].trim();
+      const dna = parts[1].trim();
+      const error = validatePair(sgRNA, dna);
+      if (error) {
+        errors.push({row: lineNumber, line_number: lineNumber, error: error});
+        return;
+      }
+      pairs.push({row: lineNumber, line_number: lineNumber, sgRNA: normalizeSeq(sgRNA), dna: normalizeSeq(dna)});
+    });
+
+    return {pairs: pairs, errors: errors, headerDetected: headerDetected};
+  }
+
+  function detectFileFormat(file, content) {
+    const cleaned = content.replace(/^\uFEFF/, "");
+    const lines = cleaned.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter(function (line) {
+      return line.trim();
+    });
+    const samples = lines.slice(0, 5);
+    let csvScore = 0;
+    let tsvScore = 0;
+    samples.forEach(function (line) {
+      csvScore += parseDelimitedLine(line, ",").length;
+      tsvScore += parseDelimitedLine(line, "\t").length;
+    });
+    if (tsvScore > csvScore) return "tsv";
+    if (csvScore > tsvScore) return "csv";
+    const name = (file && file.name ? file.name : "").toLowerCase();
+    if (name.endsWith(".tsv")) return "tsv";
+    if (name.endsWith(".csv")) return "csv";
+    const firstLine = samples[0] || "";
+    return firstLine.includes("\t") ? "tsv" : "csv";
+  }
+
+  function headerIndex(header, names, fallback) {
+    const normalizedNames = names.map(normalizeHeaderToken);
+    for (let i = 0; i < header.length; i += 1) {
+      if (normalizedNames.indexOf(normalizeHeaderToken(header[i])) !== -1) {
+        return i;
+      }
+    }
+    return fallback;
+  }
+
+  function buildFileLookup(content, format, hasHeader) {
+    const delimiter = format === "tsv" ? "\t" : ",";
+    const text = content.replace(/^\uFEFF/, "").trim();
+    const lines = text ? text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n") : [];
+    const parsed = lines.map(function (line, index) {
+      return {
+        line_number: index + 1,
+        cells: parseDelimitedLine(line, delimiter)
+      };
+    });
+
+    let start = 0;
+    let sgRNAIndex = 0;
+    let dnaIndex = 1;
+    if (hasHeader && parsed.length > 0) {
+      const header = parsed[0].cells;
+      sgRNAIndex = headerIndex(header, ["sgrna", "on"], 0);
+      dnaIndex = headerIndex(header, ["dna", "off", "off-target"], 1);
+      start = 1;
+    }
+
+    const lookup = new Map();
+    for (let i = start; i < parsed.length; i += 1) {
+      const row = i - start + 1;
+      const cells = parsed[i].cells;
+      lookup.set(String(row), {
+        row: row,
+        line_number: parsed[i].line_number,
+        sgRNA: normalizeSeq(cells[sgRNAIndex] || ""),
+        dna: normalizeSeq(cells[dnaIndex] || "")
+      });
+    }
+    return lookup;
+  }
+
+  async function runBatchPrediction() {
+    const model = requestModelPayload();
+    state.busy = true;
+    els.batchSubmit.textContent = "Running...";
+    updateActionState();
+
+    try {
+      if (state.activeTab === "text") {
+        await runTextBatch(model);
+      } else {
+        await runFileBatch(model);
+      }
+    } catch (error) {
+      setNotice("Batch prediction failed: " + error.message, "error");
+    } finally {
+      state.busy = false;
+      els.batchSubmit.textContent = "Run Batch Prediction";
+      updateActionState();
+    }
+  }
+
+  async function runTextBatch(model) {
+    const parsed = parseTextBatch(els.batchText.value);
+    if (parsed.pairs.length === 0) {
+      state.batchResults = [];
+      if (parsed.errors.length) {
+        state.batchErrors = parsed.errors;
+      } else if (parsed.headerDetected) {
+        state.batchErrors = [{row: "-", line_number: "-", error: "Header detected but no data rows were found."}];
+      } else {
+        state.batchErrors = [{row: "-", line_number: "-", error: "No valid sequence pairs to submit."}];
+      }
+      state.page = 0;
+      renderBatchTables();
+      setNotice(parsed.headerDetected && parsed.errors.length === 0 ? "Text batch skipped: header detected but no data rows were found." : "Text batch contained only invalid rows.", "warning");
+      return;
+    }
+
+    const response = await apiPost("/predict/batch", {
+      model: model.model,
+      encoder: model.encoder,
+      pairs: parsed.pairs.map(function (pair) {
+        return {sgRNA: pair.sgRNA, dna: pair.dna};
+      })
+    });
+
+    const results = Array.isArray(response.results) ? response.results : [];
+    state.batchResults = results.map(function (result, index) {
+      const source = parsed.pairs[index] || {};
+      return Object.assign({}, result, {
+        row: source.row || index + 1,
+        line_number: source.line_number || source.row || index + 1,
+        sgRNA: result.sgRNA || source.sgRNA || "",
+        dna: result.dna || source.dna || ""
+      });
+    });
+    state.batchErrors = parsed.errors;
+    state.page = 0;
+    renderBatchTables();
+    if (results.length === 0 && parsed.pairs.length > 0) {
+      state.batchErrors = state.batchErrors.concat([{row: "-", line_number: "-", error: "Backend returned no predictions for valid rows. Check the selected model, encoder, and input format."}]);
+      renderBatchTables();
+      setNotice("Text batch returned no predictions for valid rows. Check the selected model, encoder, and input format.", "error");
+      return;
+    }
+    setNotice("Text batch completed: " + state.batchResults.length + " successful, " + state.batchErrors.length + " failed.", state.batchErrors.length ? "warning" : "success");
+  }
+
+  async function runFileBatch(model) {
+    if (!state.selectedFile) {
+      setNotice("Choose a file before running file batch.", "warning");
+      return;
+    }
+
+    const content = await state.selectedFile.text();
+    const trimmed = content.replace(/^\uFEFF/, "").trim();
+    if (!trimmed) {
+      state.batchResults = [];
+      state.batchErrors = [{row: "-", line_number: "-", error: "Selected file is empty."}];
+      state.page = 0;
+      renderBatchTables();
+      setNotice("Selected file is empty.", "warning");
+      return;
+    }
+
+    const format = detectFileFormat(state.selectedFile, content);
+    const hasHeader = els.fileHasHeader.checked;
+    const rawLines = trimmed.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter(function (line) {
+      return line.trim();
+    });
+    const firstDelimiter = format === "tsv" ? "\t" : ",";
+    const headerLooksSupported = isSupportedBatchHeaderRow(parseDelimitedLine(rawLines[0] || "", firstDelimiter));
+    if (hasHeader && !headerLooksSupported && rawLines.length > 1) {
+      state.batchResults = [];
+      state.batchErrors = [{row: "-", line_number: "-", error: "File has header is checked, but the first row does not look like a supported header. Supported headers: sgRNA,dna; on,off; on,off-target."}];
+      state.page = 0;
+      renderBatchTables();
+      setNotice(state.batchErrors[0].error, "warning");
+      return;
+    }
+
+    const lookup = buildFileLookup(content, format, hasHeader || headerLooksSupported);
+    const dataLineCount = rawLines.length - (hasHeader || headerLooksSupported ? 1 : 0);
+    if (lookup.size === 0 || dataLineCount <= 0) {
+      state.batchResults = [];
+      state.batchErrors = [{row: "-", line_number: "-", error: (hasHeader || headerLooksSupported) ? "No data rows were found after the header. If the first row is data, uncheck File has header." : "No usable data rows were found in the selected file."}];
+      state.page = 0;
+      renderBatchTables();
+      setNotice(state.batchErrors[0].error, "warning");
+      return;
+    }
+
+    const response = await apiPost("/predict/file", {
+      model: model.model,
+      encoder: model.encoder,
+      file_content: content,
+      format: format,
+      has_header: hasHeader || headerLooksSupported
+    });
+
+    const results = Array.isArray(response.results) ? response.results : [];
+    state.batchResults = results.map(function (result, index) {
+      const row = result.row == null ? index + 1 : result.row;
+      const source = lookup.get(String(row)) || {};
+      return Object.assign({}, result, {
+        row: row,
+        line_number: source.line_number || row,
+        sgRNA: result.sgRNA || source.sgRNA || "",
+        dna: result.dna || source.dna || ""
+      });
+    });
+
+    const serverErrors = Array.isArray(response.errors) ? response.errors : [];
+    state.batchErrors = serverErrors.map(function (error) {
+      const source = lookup.get(String(error.row)) || {};
+      return {
+        row: error.row == null ? "-" : error.row,
+        line_number: source.line_number || error.row || "-",
+        error: error.error || error.reason || "Unknown row error."
+      };
+    });
+
+    if (state.batchResults.length === 0 && state.batchErrors.length === 0) {
+      state.batchErrors = [{row: "-", line_number: "-", error: "Backend returned no predictions for the file. Check the inferred delimiter and header flag."}];
+    }
+
+    state.page = 0;
+    renderBatchTables();
+    if (state.batchResults.length === 0 && state.batchErrors.length > 0 && state.batchErrors[0].error.indexOf("Backend returned no predictions") === 0) {
+      setNotice("File batch returned no predictions. Check the inferred delimiter and header flag.", "error");
+      return;
+    }
+    setNotice("File batch completed: " + (response.success != null ? response.success : state.batchResults.length) + " successful, " + (response.failed != null ? response.failed : state.batchErrors.length) + " failed.", state.batchErrors.length ? "warning" : "success");
+  }
+
+  function renderBatchTables() {
+    renderResults();
+    renderErrors();
+    updateActionState();
+  }
+
+  function renderResults() {
+    const total = state.batchResults.length;
+    const start = state.page * PAGE_SIZE;
+    const pageRows = state.batchResults.slice(start, start + PAGE_SIZE);
+
+    els.resultsBody.innerHTML = "";
+    pageRows.forEach(function (result) {
+      const probability = probabilityOf(result);
+      const risk = normalizedRisk(result.risk_level, probability);
+      const backendText = result.model_backend || result.backend || (selectedModel() ? selectedModel().backend : null) || "unknown";
+      const backendMode = isFallbackBackend(backendText) ? "fallback" : modelMode(selectedModel());
+      const backendChip = backendMode === "fallback" ? " <span class=\"backend-chip fallback\">fallback smoke-test</span>" : backendMode === "not_loaded" ? " <span class=\"backend-chip not-loaded\">not loaded</span>" : "";
+      const tr = document.createElement("tr");
+      tr.className = risk === "high" ? "row-high" : risk === "low" ? "row-low" : "";
+      tr.innerHTML = [
+        "<td>" + escapeHtml(result.row != null ? result.row : "") + "</td>",
+        "<td class=\"seq mono\">" + escapeHtml(result.sgRNA || "") + "</td>",
+        "<td class=\"seq mono\">" + escapeHtml(result.dna || "") + "</td>",
+        "<td>" + (probability * 100).toFixed(2) + "%</td>",
+        "<td><span class=\"risk-badge " + risk + "\">" + risk + "</span></td>",
+        "<td>" + escapeHtml(backendText) + backendChip + "</td>"
+      ].join("");
+      els.resultsBody.appendChild(tr);
+    });
+
+    els.resultsEmpty.hidden = total > 0;
+    els.resultsWrap.hidden = total === 0;
+    els.exportResults.disabled = total === 0;
+
+    const failed = state.batchErrors.length;
+    if (total === 0 && failed === 0) {
+      els.batchSummary.textContent = "No batch results yet.";
+      els.resultsEmpty.textContent = "Successful batch predictions will appear here with the original sgRNA and DNA inputs preserved.";
+    } else if (total === 0 && failed > 0) {
+      els.batchSummary.textContent = "0 successful, " + failed + " failed.";
+      els.resultsEmpty.textContent = "No successful predictions. Check Failed Rows below.";
+    } else {
+      els.batchSummary.textContent = total + " successful, " + failed + " failed.";
+      els.resultsEmpty.textContent = "Successful batch predictions will appear here with the original sgRNA and DNA inputs preserved.";
+    }
+
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const showPagination = total > PAGE_SIZE;
+    els.pagination.hidden = !showPagination;
+    els.batchPageSummary.textContent = total ? "Showing " + (start + 1) + "-" + Math.min(start + PAGE_SIZE, total) + " of " + total + "." : "";
+    els.pageLabel.textContent = "Page " + (state.page + 1) + " of " + pages;
+    els.prevPage.disabled = state.page === 0;
+    els.nextPage.disabled = state.page >= pages - 1;
+  }
+
+  function renderErrors() {
+    els.errorsBody.innerHTML = "";
+    state.batchErrors.forEach(function (error) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = [
+        "<td>" + escapeHtml(error.row) + "</td>",
+        "<td>" + escapeHtml(error.line_number || error.row) + "</td>",
+        "<td>" + escapeHtml(error.error || error.reason || "Unknown error.") + "</td>"
+      ].join("");
+      els.errorsBody.appendChild(tr);
+    });
+    els.errorsPanel.hidden = state.batchErrors.length === 0;
+  }
+
+  function clearBatch() {
+    state.batchResults = [];
+    state.batchErrors = [];
+    state.page = 0;
+    els.batchText.value = "";
+    state.selectedFile = null;
+    els.fileInput.value = "";
+    els.fileName.textContent = "No file selected.";
+    renderBatchTables();
+  }
+
+  function csvCell(value) {
+    const text = value == null ? "" : String(value);
+    return "\"" + text.replace(/"/g, "\"\"") + "\"";
+  }
+
+  function exportResults() {
+    if (!state.batchResults.length) return;
+    const header = ["row", "sgRNA", "dna", "off_target_prob", "risk_level", "model_used", "encoder_used", "model_backend"];
+    const rows = state.batchResults.map(function (result) {
+      const probability = probabilityOf(result);
+      const risk = normalizedRisk(result.risk_level, probability);
+      return [
+        result.row,
+        result.sgRNA,
+        result.dna,
+        probability.toFixed(6),
+        risk,
+        result.model_used || (selectedModel() ? selectedModel().name : "") || "",
+        result.encoder_used || (selectedModel() ? selectedModel().encoder : "") || "",
+        result.model_backend || (selectedModel() ? selectedModel().backend : "") || ""
+      ].map(csvCell).join(",");
+    });
+    const csv = header.join(",") + "\n" + rows.join("\n") + "\n";
+    const blob = new Blob([csv], {type: "text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "crispr-dualpred-results.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function setActiveTab(tab) {
+    state.activeTab = tab;
+    els.tabs.forEach(function (button) {
+      const active = button.dataset.tab === tab;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    els.textPanel.classList.toggle("active", tab === "text");
+    els.filePanel.classList.toggle("active", tab === "file");
+  }
+
+  function handleFile(file) {
+    state.selectedFile = file;
+    els.fileName.textContent = file ? file.name + " (" + Math.max(1, Math.round(file.size / 1024)) + " KB)" : "No file selected.";
+  }
+
+  function bindEvents() {
+    els.refreshStatus.addEventListener("click", refreshStatus);
+    els.apiBase.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") refreshStatus();
+    });
+    els.modelSelect.addEventListener("change", renderSelectedModelDetail);
+    els.singleExample.addEventListener("click", function () {
+      els.singleSgrna.value = EXAMPLE_SGRNA;
+      els.singleDna.value = EXAMPLE_DNA;
+      validateSingleInputs();
+    });
+    els.singleSubmit.addEventListener("click", runSinglePrediction);
+    els.singleSgrna.addEventListener("input", validateSingleInputs);
+    els.singleDna.addEventListener("input", validateSingleInputs);
+    [els.singleSgrna, els.singleDna].forEach(function (input) {
+      input.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" && !els.singleSubmit.disabled) {
+          runSinglePrediction();
+        }
+      });
+    });
+    els.tabs.forEach(function (button) {
+      button.addEventListener("click", function () {
+        setActiveTab(button.dataset.tab);
+      });
+      button.addEventListener("keydown", function (event) {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") {
+          return;
+        }
+        event.preventDefault();
+        const currentIndex = els.tabs.indexOf(button);
+        let nextIndex = currentIndex;
+        if (event.key === "ArrowRight") {
+          nextIndex = (currentIndex + 1) % els.tabs.length;
+        } else if (event.key === "ArrowLeft") {
+          nextIndex = (currentIndex - 1 + els.tabs.length) % els.tabs.length;
+        } else if (event.key === "Home") {
+          nextIndex = 0;
+        } else if (event.key === "End") {
+          nextIndex = els.tabs.length - 1;
+        }
+        const nextTab = els.tabs[nextIndex];
+        setActiveTab(nextTab.dataset.tab);
+        nextTab.focus();
+      });
+    });
+    els.chooseFile.addEventListener("click", function () {
+      els.fileInput.click();
+    });
+    els.fileInput.addEventListener("change", function () {
+      handleFile(els.fileInput.files[0] || null);
+    });
+    els.dropZone.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === " " || event.key === "Spacebar" || event.code === "Space") {
+        event.preventDefault();
+        els.fileInput.click();
+      }
+    });
+    ["dragenter", "dragover"].forEach(function (eventName) {
+      els.dropZone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        els.dropZone.classList.add("dragging");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (eventName) {
+      els.dropZone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        els.dropZone.classList.remove("dragging");
+      });
+    });
+    els.dropZone.addEventListener("drop", function (event) {
+      handleFile(event.dataTransfer.files[0] || null);
+    });
+    els.batchSubmit.addEventListener("click", runBatchPrediction);
+    els.clearBatch.addEventListener("click", clearBatch);
+    els.exportResults.addEventListener("click", exportResults);
+    els.prevPage.addEventListener("click", function () {
+      if (state.page > 0) {
+        state.page -= 1;
+        renderResults();
+      }
+    });
+    els.nextPage.addEventListener("click", function () {
+      if ((state.page + 1) * PAGE_SIZE < state.batchResults.length) {
+        state.page += 1;
+        renderResults();
+      }
+    });
+  }
+
+  function init() {
+    els.apiBase.value = initialApiBase();
+    bindEvents();
+    setNotice("Checking backend and model status. Predictions are disabled until /health and /models respond.", "warning");
+    refreshStatus();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

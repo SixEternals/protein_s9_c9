@@ -40,6 +40,27 @@ def normalize_sequence(seq: str, length: int = 23) -> str:
     return normalized
 
 
+def validate_sequence(seq: str, name: str = "sequence", length: int = 23) -> None:
+    """Strictly validate a biological sequence for prediction input.
+
+    Raises ValueError with a clear message if the sequence is invalid.
+    Rules:
+      - Must not be empty
+      - Must be exactly `length` characters
+      - Only A, T, C, G, U allowed (U will be converted to T by caller)
+      - No N, -, or other placeholders allowed for prediction input
+    """
+    if not seq:
+        raise ValueError(f"{name} is empty")
+    seq = seq.strip().upper()
+    if len(seq) != length:
+        raise ValueError(f"{name} length must be {length}, got {len(seq)}")
+    valid = set("ATCGU")
+    invalid = [ch for ch in seq if ch not in valid]
+    if invalid:
+        raise ValueError(f"{name} contains invalid characters: {set(invalid)}; only A/T/C/G/U allowed")
+
+
 def canonical_pair(on_base: str, off_base: str) -> Tuple[str, str]:
     on_base = _normalize_base(on_base)
     off_base = _normalize_base(off_base)

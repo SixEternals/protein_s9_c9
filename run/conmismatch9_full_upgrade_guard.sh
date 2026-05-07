@@ -87,7 +87,7 @@ run_recipe() {
       ;;
     guard_c)
       freeze_epochs=30
-      distill_alpha=0.50
+      distill_alpha=0.30
       aux_max_scale=0.10
       ;;
     guard_d)

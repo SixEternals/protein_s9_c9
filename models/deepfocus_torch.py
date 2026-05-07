@@ -140,10 +140,15 @@ class CATransformerEncoder(nn.Module):
 
 
 class DeepFocusTorchModel(nn.Module):
+    VALID_ABLATION_MODES = {"full", "inception_only"}
+
     def __init__(self, config: DeepFocusTorchConfig | None = None):
         super().__init__()
         self.config = config or DeepFocusTorchConfig()
-        self.ablation_mode = self.config.ablation_mode
+        self.ablation_mode = self.config.ablation_mode.strip().lower().replace("-", "_")
+        if self.ablation_mode not in self.VALID_ABLATION_MODES:
+            allowed = ", ".join(sorted(self.VALID_ABLATION_MODES))
+            raise ValueError(f"unsupported DeepFocus ablation_mode: {self.config.ablation_mode!r}; expected one of {allowed}")
         self.inception = RegionAwareInception(self.config.input_dim, self.config.hidden_dim, self.config.dropout)
         if self.ablation_mode == "full":
             self.transformer = CATransformerEncoder(self.config)

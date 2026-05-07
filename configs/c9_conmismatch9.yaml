@@ -2,7 +2,7 @@
   "model": "conmismatch9",
   "encoder": "c9",
   "device": "auto",
-  "weights_path": "artifacts/c9_conmismatch9.pt",
+  "weights_path": null,
   "feature_cache_dir": "runs/feature_cache",
   "cache_features": true,
   "data_variant_digit": "9",

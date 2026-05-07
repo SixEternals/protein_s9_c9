@@ -2,7 +2,7 @@
   "model": "deepfocus",
   "encoder": "r9",
   "device": "auto",
-  "weights_path": "artifacts/r9_deepfocus.pt",
+  "weights_path": null,
   "feature_cache_dir": "runs/feature_cache",
   "cache_features": true,
   "data_variant_digit": "9",
