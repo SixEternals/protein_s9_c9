@@ -1,0 +1,6 @@
+{
+  "model": "conmismatch9",
+  "encoder": "c9",
+  "device": "auto",
+  "weights_path": "artifacts/full_k562_conmismatch9/conmismatch9_c9_K562.pt"
+}

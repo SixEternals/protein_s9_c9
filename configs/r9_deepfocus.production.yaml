@@ -1,0 +1,6 @@
+{
+  "model": "deepfocus",
+  "encoder": "r9",
+  "device": "auto",
+  "weights_path": "artifacts/full_upgrade_k562_deepfocus/seed_42/full/deepfocus_r9_K562.pt"
+}
