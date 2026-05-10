@@ -16,6 +16,16 @@ htmlcov/
 venv/
 env/
 ENV/
+*.egg-info/
+build/
+dist/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
 # Project docs and generated experiment outputs
 doc/
