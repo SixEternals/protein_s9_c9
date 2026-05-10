@@ -1,0 +1,34 @@
+{
+  "model_name": "conmismatch9",
+  "encoder_name": "c9",
+  "feature_names": [
+    "mismatch_density",
+    "single_run_density",
+    "run2_density",
+    "run3p_density",
+    "longest_run_density",
+    "backbone_mismatch_density",
+    "modulation_mismatch_density",
+    "run_branch_mismatch_density",
+    "continuous_density",
+    "gate_score",
+    "gc_ratio",
+    "gap_density"
+  ],
+  "bias": -1.3579301620192856,
+  "weights": [
+    -0.034512958726532095,
+    -5.594022030255974,
+    -3.9544099307308285,
+    3.3299431505100916,
+    1.0817973976131523,
+    11.367166304608826,
+    -0.9332903409062835,
+    -9.22618182504363,
+    7.21822458275479,
+    3.0978219575142583,
+    2.20060242287832,
+    0.11825414183455278
+  ],
+  "metadata": {}
+}

@@ -19,7 +19,7 @@ ENV/
 
 # Project docs and generated experiment outputs
 doc/
-artifacts/
+# artifacts/
 runs/
 output/
 *.log
