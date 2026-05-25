@@ -1,0 +1,8 @@
+version,date,commit_hash,status,auroc,auprc,train_time,gpu_mem,epochs,best_epoch,config_path,notes
+BL0-P0,2026-05-23T13:04:52+00:00,7955329,blocked,,,,,,,configs/bl0.yaml,FileNotFoundError: RNA-FM checkpoint not found: /data/zwf/cache/torch/hub/checkpoints/RNA-FM_pretrained.pth
+BL0-P0,2026-05-23T19:17:14+00:00,7955329,cclmoff_csv_unavailable_using_local_data,,,,,,,configs/bl0.yaml,cclmoff_csv_unavailable_using_local_data; FileNotFoundError: RNA-FM checkpoint not found: /data/zwf/cache/torch/hub/checkpoints/RNA-FM_pretrained.pth
+BL0-P0-weighted-average,2026-05-23T20:44:12+00:00,7955329,completed,0.998795,0.850950,no_training,cpu,0,0,configs/bl0_weighted_average.yaml,dataset=GUIDE-seq; split=test; weight_region_r9=0.16; run_c9_weight=0.84
+BL0a-smoke-train,2026-05-24T18:22:39+00:00,7955329,smoke_train_passed,0.578125,0.667361,,cpu,1,1,configs/bl0a_smoke.yaml,tiny CCLMoff CSV training-chain smoke test; not a BL0a benchmark
+BL0a-quick-1000,2026-05-24T18:35:48+00:00,7955329,train_chain_passed,0.928581,0.913107,,0.52GB,2,2,configs/bl0a_quick_1000.yaml,1000-row CCLMoff CSV quick training-chain check; not a formal BL0a benchmark
+BL0a-formal-frozen-v1,2026-05-25T09:34:01+00:00,7955329,completed,0.840561,0.072718,1.316h,1.59GB,5,1,configs/bl0a_formal_frozen.yaml,frozen RNA-FM plus CCLMoff-style MLP; sgRNA_type group-safe split
+BL0b-finetune-v1,2026-05-25T14:27:31+00:00,7955329,completed,0.974484,0.522282,3.482h,11.42GB,10,8,configs/bl0b_finetune.yaml,full RNA-FM fine-tune plus CCLMoff-style MLP; sgRNA_type group-safe split

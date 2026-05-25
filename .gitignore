@@ -29,15 +29,23 @@ dist/
 
 # Project docs and generated experiment outputs
 doc/
+doc_new/
 artifacts/
 runs/
 output/
+results/
+data/
+datasets/
+offtarget_fusion_project/
 *.log
 *.pt
 *.pth
 *.ckpt
 *.npy
 *.npz
+.claude/
+.agents/
+5_23newOutline.md
 
 # OS/editor noise
 .DS_Store

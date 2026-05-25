@@ -1,0 +1,66 @@
+# BL0b formal baseline: full RNA-FM fine-tune + CCLMoff-style MLP head.
+# Reuses the BL0a formal training path, changing RNA-FM from frozen to trainable.
+
+model: bl0b_rnafm_mlp
+version: BL0b-finetune-v1
+seed: 42
+device: auto
+
+dataset:
+  csv_path: data/cclmoff/09212024_CCLMoff_dataset.csv
+  max_rows: null
+  replace_t_with_u: true
+
+split:
+  strategy: sgRNA_type_group
+  group_column: sgRNA_type
+  train_fraction: 0.8
+  val_fraction: 0.1
+  test_fraction: 0.1
+  max_attempts: 500
+  allow_single_class_split: false
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  allow_download: false
+  freeze: false
+  repr_layer: 12
+
+model_config:
+  input_dim: 640
+  head_type: official_mlp
+  transformer_dim: 640
+  transformer_layers: 1
+  attention_heads: 8
+  ffn_dim: 1024
+  mlp_hidden_dim: 64
+  dropout: 0.2
+  pool: cls
+
+training:
+  epochs: 10
+  batch_size: 256
+  eval_batch_size: 512
+  head_learning_rate: 0.001
+  rnafm_learning_rate: 0.0005
+  warmup_epochs: 5
+  gradient_clip: 1.0
+  weight_decay: 0.00001
+  num_workers: 8
+  use_balanced_sampler: true
+  precision: bf16
+  monitor: auprc
+  monitor_mode: max
+  log_every: 100
+  max_train_batches: null
+  max_eval_batches: null
+
+hardware:
+  gpu_count: 2
+  use_amp: true
+  use_ddp: true
+
+outputs:
+  output_dir: results/bl0b_finetune
+  experiment_csv: results/experiments.csv
+  notes: full RNA-FM fine-tune plus CCLMoff-style MLP; sgRNA_type group-safe split

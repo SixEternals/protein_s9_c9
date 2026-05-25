@@ -1,0 +1,47 @@
+# BL0: CCLMoff-style RNA-FM baseline.
+# This config intentionally avoids region/run encoders.
+
+model: bl0_cclmoff
+seed: 42
+device: auto
+mode: smoke
+data_source_status: legacy_npz_smoke_using_local_data
+
+dataset_files:
+  - /data/zwf/project/zhb/data/GUIDE-seq/GUIDE-seq_9bit.npz
+
+sampling:
+  observed_positive_cap: 64
+  unobserved_candidate_cap: 64
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  allow_download: false
+  freeze: true
+  repr_layer: 12
+  pair_joiner: "<sep>"
+  replace_t_with_u: true
+
+model_config:
+  input_dim: 640
+  head_type: official_mlp
+  transformer_dim: 640
+  transformer_layers: 1
+  attention_heads: 8
+  ffn_dim: 1024
+  mlp_hidden_dim: 64
+  dropout: 0.2
+  pool: cls
+
+training:
+  epochs: 1
+  batch_size: 8
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  num_workers: 0
+  patience: 2
+
+outputs:
+  experiment_csv: results/experiments.csv
+  audit_dir: results/audits
+  checkpoint_dir: results/checkpoints

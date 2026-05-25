@@ -1,0 +1,42 @@
+# BL0a quick training config.
+# Purpose: verify RNA-FM + MLP training on a small real CCLMoff CSV subset before full training.
+
+model: bl0a_rnafm_mlp
+version: BL0a-quick-1000
+seed: 42
+device: auto
+
+dataset:
+  csv_path: data/cclmoff/09212024_CCLMoff_dataset.csv
+  max_rows: 1000
+  replace_t_with_u: true
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  allow_download: false
+  freeze: true
+  repr_layer: 12
+
+model_config:
+  input_dim: 640
+  head_type: official_mlp
+  transformer_dim: 640
+  transformer_layers: 1
+  attention_heads: 8
+  ffn_dim: 1024
+  mlp_hidden_dim: 64
+  dropout: 0.2
+  pool: cls
+
+training:
+  epochs: 2
+  batch_size: 32
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  num_workers: 0
+  use_balanced_sampler: true
+
+outputs:
+  output_dir: results/bl0a_quick_1000
+  experiment_csv: results/experiments.csv
+  notes: 1000-row CCLMoff CSV quick training-chain check; not a formal BL0a benchmark

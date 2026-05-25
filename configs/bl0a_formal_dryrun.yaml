@@ -1,0 +1,56 @@
+# BL0a formal-script dry run.
+# This config validates the formal trainer plumbing quickly; it is not a benchmark.
+
+model: bl0a_rnafm_mlp
+version: BL0a-formal-dryrun
+seed: 42
+device: auto
+
+dataset:
+  csv_path: data/cclmoff/09212024_CCLMoff_dataset.csv
+  max_rows: 1000
+  replace_t_with_u: true
+
+split:
+  strategy: row_stratified
+  train_fraction: 0.8
+  val_fraction: 0.1
+  test_fraction: 0.1
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  allow_download: false
+  freeze: true
+  repr_layer: 12
+
+model_config:
+  input_dim: 640
+  head_type: official_mlp
+  transformer_dim: 640
+  transformer_layers: 1
+  attention_heads: 8
+  ffn_dim: 1024
+  mlp_hidden_dim: 64
+  dropout: 0.2
+  pool: cls
+
+training:
+  epochs: 1
+  batch_size: 16
+  eval_batch_size: 64
+  head_learning_rate: 0.001
+  rnafm_learning_rate: 0.00001
+  weight_decay: 0.00001
+  num_workers: 0
+  use_balanced_sampler: true
+  precision: bf16
+  monitor: auprc
+  monitor_mode: max
+  log_every: 1
+  max_train_batches: 2
+  max_eval_batches: 2
+
+outputs:
+  output_dir: results/bl0a_formal_dryrun
+  experiment_csv: results/experiments_dryrun.csv
+  notes: dry-run for BL0a formal trainer plumbing; not a benchmark
