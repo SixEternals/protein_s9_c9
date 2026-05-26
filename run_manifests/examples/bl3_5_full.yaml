@@ -1,0 +1,38 @@
+task_id: bl3_5_full_cclmoff_seed42
+agent: codex
+stage: train
+purpose: main
+bl_version: BL3.5-Full
+architecture_layer: middleware
+
+config_path: configs/bl3_5_full_cclmoff.yaml
+model_entry: models/bl3_5_fusion.py
+working_dir: .
+
+command:
+  - python
+  - scripts/train_bl3.py
+  - --config
+  - configs/bl3_5_full_cclmoff.yaml
+
+policy:
+  use_rnafm: false
+  freeze_rnafm: null
+  split_mode: sgrna_safe
+  pos_weight: 12
+
+midware:
+  use_c9: true
+  use_r9: true
+  fusion_mode: full
+  allow_concat_only: false
+
+eval:
+  checkpoint_type: best
+  report_metrics:
+    - AUROC
+    - AUPRC
+
+notes: >
+  Example manifest for the external guardrails message-body flow. It does not
+  modify model code. Use guarded_run.py --dry-run first.

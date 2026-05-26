@@ -6,3 +6,10 @@ BL0a-smoke-train,2026-05-24T18:22:39+00:00,7955329,smoke_train_passed,0.578125,0
 BL0a-quick-1000,2026-05-24T18:35:48+00:00,7955329,train_chain_passed,0.928581,0.913107,,0.52GB,2,2,configs/bl0a_quick_1000.yaml,1000-row CCLMoff CSV quick training-chain check; not a formal BL0a benchmark
 BL0a-formal-frozen-v1,2026-05-25T09:34:01+00:00,7955329,completed,0.840561,0.072718,1.316h,1.59GB,5,1,configs/bl0a_formal_frozen.yaml,frozen RNA-FM plus CCLMoff-style MLP; sgRNA_type group-safe split
 BL0b-finetune-v1,2026-05-25T14:27:31+00:00,7955329,completed,0.974484,0.522282,3.482h,11.42GB,10,8,configs/bl0b_finetune.yaml,full RNA-FM fine-tune plus CCLMoff-style MLP; sgRNA_type group-safe split
+BL3-hard-B-soft-tau4,2026-05-26T01:07:03+00:00,c175cc6,completed,0.992154,0.554510,10.2m,2.5GB,50,50,configs/bl3_hard.yaml,Region+Run prior with CNN+MLP; soft seed gradient tau=4; GUIDE-seq 520K; no RNA-FM
+BL3-hard-A,2026-05-26T01:26:00+00:00,c175cc6,completed,0.989395,0.555407,13.8m,2.5GB,50,32,configs/bl3_hard_a.yaml,Hard seed gradient 1x/2x; Region+Run+CNN
+BL3-hard-C,2026-05-26T01:38:00+00:00,c175cc6,completed,0.990821,0.565739,10.4m,2.5GB,50,35,configs/bl3_hard_c.yaml,Learnable seed gradient; Region+Run+CNN
+BL3-ablation-region,2026-05-26T01:49:00+00:00,c175cc6,completed,0.984199,0.582734,10.2m,2.5GB,50,34,configs/bl3_ablation_region.yaml,Region only; no Run
+BL3-ablation-run,2026-05-26T02:01:00+00:00,c175cc6,completed,0.988892,0.609402,10.2m,2.5GB,50,43,configs/bl3_ablation_run.yaml,Run only; no Region
+BL3-RNAFM-Fusion,2026-05-26T15:13:00+00:00,c175cc6,completed,0.958497,0.205621,36.6m,4.0GB,50,11,configs/bl3_rnafm_fusion_cclmoff.yaml,RNA-FM frozen + Run CNN fusion; precomputed embeddings; batch=2048; group-safe split; pos_weight=145; CCLMoff 6.4M
+BL3.5-Full,2026-05-26T19:00:00+00:00,c175cc6,completed,0.968273,0.229861,30.8m,2.0GB,50,2,configs/bl3_5_full_cclmoff.yaml,"C9+R9 bidirectional Cross-Attn+Residual+LN; no RNA-FM; group-safe split; pos_weight=145; test AUPRC=0.230 (best.pt epoch 2); val peak=0.420; SM 40-62%; GPU underutilized"

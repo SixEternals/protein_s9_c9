@@ -1,0 +1,31 @@
+# BL3 Run-only on CCLMoff (6.4M rows, 11 detection methods)
+version: "BL3-cclmoff-runonly"
+
+dataset:
+  file: data/cclmoff/cclmoff_9bit.npz
+  group_csv: data/cclmoff/09212024_CCLMoff_dataset.csv
+  group_column: sgRNA_type
+
+run_encoder:
+  weight_mode: soft
+  tau: 4.0
+
+model_config:
+  use_region: false
+  use_run: true
+
+training:
+  batch_size: 2048
+  num_workers: 8
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  epochs: 50
+  monitor: auprc
+  monitor_mode: max
+  gradient_clip: null
+
+seed: 42
+
+outputs:
+  dir: results/bl3_cclmoff_runonly
+  experiments_csv: results/experiments.csv

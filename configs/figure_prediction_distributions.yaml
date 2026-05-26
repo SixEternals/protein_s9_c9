@@ -1,0 +1,46 @@
+{
+  "seed": 42,
+  "unobserved_sample_size": 15000,
+  "dpi": 300,
+  "output_dir": "results/figures",
+  "models": {
+    "P0": {
+      "label": "P0-weighted",
+      "auprc": 0.851,
+      "path": "results/bl0b_finetune/p0_test_predictions.csv",
+      "probability_column": "p0_predicted_probability"
+    },
+    "BL0a": {
+      "label": "BL0a-frozen",
+      "auprc": 0.073,
+      "path": "results/bl0a_formal_frozen/test_predictions.csv",
+      "probability_column": "predicted_probability"
+    },
+    "BL0b": {
+      "label": "BL0b-finetune",
+      "auprc": 0.522,
+      "path": "results/bl0b_finetune/test_predictions.csv",
+      "probability_column": "predicted_probability"
+    }
+  },
+  "figure_a": {
+    "basename": "figure_A_prediction_correlation",
+    "pairs": [
+      ["P0", "BL0b"],
+      ["BL0a", "BL0b"],
+      ["P0", "BL0a"]
+    ],
+    "figsize": [15.0, 5.0],
+    "with_kde": true
+  },
+  "figure_c": {
+    "basename": "figure_C_prediction_violin",
+    "model_order": ["P0", "BL0a", "BL0b"],
+    "figsize": [10.0, 8.0]
+  },
+  "colors": {
+    "observed_positive": "#C41E3A",
+    "unobserved_candidate": "#1f4e79",
+    "density": "#9AA0A6"
+  }
+}

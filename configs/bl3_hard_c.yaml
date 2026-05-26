@@ -1,0 +1,34 @@
+version: BL3-hard-C-learnable-gradient
+model: bl3_hard_prior
+seed: 42
+device: auto
+
+dataset:
+  name: GUIDE-seq
+  file: /data/zwf/project/zhb/data/GUIDE-seq/GUIDE-seq_9bit.npz
+
+run_encoder:
+  weight_mode: none
+
+model_config:
+  cnn_channels: [64, 128]
+  kernel_size: 3
+  dropout: 0.3
+  mlp_hidden_dim: 64
+  use_region: true
+  use_run: true
+  learnable_seed_weights: true
+
+training:
+  epochs: 50
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  monitor: auprc
+  monitor_mode: max
+  num_workers: 8
+
+outputs:
+  dir: results/bl3_hard_c
+  experiments_csv: results/experiments.csv

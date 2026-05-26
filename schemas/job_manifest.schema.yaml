@@ -1,0 +1,44 @@
+# Job manifest schema for external guardrails.
+#
+# This is a human-readable schema, not a JSON Schema implementation.
+# The enforcing code lives in scripts/preflight_guardrails.py.
+
+required:
+  task_id: "Stable task id, e.g. bl3_5_full_seed42"
+  agent: "codex, kimi, claude, or human"
+  stage: "train | eval | test | precompute | export | audit"
+  bl_version: "P0 | BL0a | BL0b | BL3-hard | BL3-gradient | BL3.5-Full | BL4-Run-only | ..."
+  architecture_layer: "frontend | middleware | backend | evaluation | data | audit"
+  config_path: "Path to YAML config for train/eval/test jobs"
+  command: "Command list or shell-like string; guarded_run executes without shell"
+  policy:
+    use_rnafm: "Required bool"
+    freeze_rnafm: "Required bool when use_rnafm=true; null allowed when use_rnafm=false"
+    split_mode: "random | sgrna_safe | loo"
+    pos_weight: "Number <= 50, or null"
+
+optional:
+  purpose: "main | ablation | smoke | dryrun"
+  model_entry: "Optional model file path"
+  working_dir: "Defaults to project root"
+  env: "Mapping of environment variables added by guarded_run"
+  midware:
+    use_c9: "bool"
+    use_r9: "bool"
+    fusion_mode: "run_only | attn | gate | full | concat"
+    allow_concat_only: "bool, only true for explicit historical ablation"
+  eval:
+    checkpoint_path: "Required for eval/test jobs"
+    checkpoint_type: "best"
+    report_metrics: ["AUROC", "AUPRC"]
+  notes: "Free-form notes for handoff"
+
+hard_rules:
+  - "BL3 and BL3.5 must use use_rnafm=false."
+  - "BL3.5 must be architecture_layer=middleware."
+  - "BL3.5 must use C9 and R9 with dynamic fusion: attn, gate, or full."
+  - "C9+R9 concat is not allowed for main-line middleware; only explicit ablation may set allow_concat_only=true."
+  - "split_mode must be explicit: random, sgrna_safe, or loo."
+  - "pos_weight must be <= 50."
+  - "eval/test jobs must use checkpoint_type=best and report both AUROC and AUPRC."
+  - "guarded_run refuses destructive git commands, rm, sudo, and shell control operators."

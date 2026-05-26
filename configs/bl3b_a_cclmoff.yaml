@@ -1,0 +1,39 @@
+# BL3b-A: Position Embedding only (no seed gate)
+version: "BL3b-A"
+
+dataset:
+  file: data/cclmoff/cclmoff_9bit.npz
+  group_csv: data/cclmoff/09212024_CCLMoff_dataset.csv
+  group_column: sgRNA_type
+
+run_encoder:
+  weight_mode: soft
+  tau: 4.0
+
+model:
+  name: BL3bSeedRegression
+
+model_config:
+  use_region: false
+  use_run: true
+  hidden_dim: 128
+  dropout: 0.2
+  position_embedding: learnable
+  use_seed_gate: false
+  cnn_channels: [64, 128]
+
+training:
+  batch_size: 2048
+  num_workers: 8
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  epochs: 50
+  monitor: auprc
+  monitor_mode: max
+  gradient_clip: null
+
+seed: 42
+
+outputs:
+  dir: results/bl3b_a_cclmoff
+  experiments_csv: results/experiments.csv

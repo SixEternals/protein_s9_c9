@@ -1,0 +1,31 @@
+# BL3-hard-B: Region + Run prior encoding with soft seed gradient (tau=4).
+# Uses local .npz files (e.g. GUIDE-seq_9bit.npz).
+
+version: BL3-hard-B-soft-tau4
+model: bl3_hard_prior
+seed: 42
+device: auto
+
+dataset:
+  name: GUIDE-seq
+  file: /data/zwf/project/zhb/data/GUIDE-seq/GUIDE-seq_9bit.npz
+
+model_config:
+  cnn_channels: [64, 128]
+  kernel_size: 3
+  dropout: 0.3
+  mlp_hidden_dim: 64
+
+training:
+  epochs: 50
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  monitor: auprc
+  monitor_mode: max
+  num_workers: 8
+
+outputs:
+  dir: results/bl3_hard
+  experiments_csv: results/experiments.csv
