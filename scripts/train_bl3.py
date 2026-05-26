@@ -35,8 +35,6 @@ from encoders.run_encoder import RegionEncoder, RunEncoder
 from models.bl3_hard_prior import BL3HardPrior
 from models.bl3b_seed_regression import BL3bSeedRegression
 from models.bl3_5_fusion import BL35FullFusion
-from models.bl4_rnafm_fusion import BL3RNAFMFusion
-from utils.rnafm import load_rnafm, normalize_pair_sequence, tokenize_rnafm_sequences
 from utils.config import load_config
 
 
@@ -303,61 +301,28 @@ def main() -> int:
 
     model_name = config.get("model", {}).get("name", "BL3HardPrior")
 
-    # Check for precomputed RNA-FM embeddings
-    rnafm_emb_path = config.get("rnafm", {}).get("embeddings_path")
-    use_precomputed_rnafm = rnafm_emb_path is not None and Path(rnafm_emb_path).exists()
-
-    train_dataset = LocalNpzDataset(npz_path, split_indices["train"], seed, weight_mode=weight_mode, rnafm_emb_path=rnafm_emb_path)
-    val_dataset = LocalNpzDataset(npz_path, split_indices["val"], seed, weight_mode=weight_mode, rnafm_emb_path=rnafm_emb_path)
-    test_dataset = LocalNpzDataset(npz_path, split_indices["test"], seed, weight_mode=weight_mode, rnafm_emb_path=rnafm_emb_path)
+    train_dataset = LocalNpzDataset(npz_path, split_indices["train"], seed, weight_mode=weight_mode)
+    val_dataset = LocalNpzDataset(npz_path, split_indices["val"], seed, weight_mode=weight_mode)
+    test_dataset = LocalNpzDataset(npz_path, split_indices["test"], seed, weight_mode=weight_mode)
 
     batch_size = int(training_cfg.get("batch_size", 128))
     num_workers = int(training_cfg.get("num_workers", 0))
 
-    # Setup collate_fn for RNA-FM models (real-time mode only)
-    collate_fn = None
-    rnafm_model_raw = None
-    alphabet = None
-    if model_name == "BL3RNAFMFusion" and not use_precomputed_rnafm:
-        rnafm_cfg = dict(config.get("rnafm", {}))
-        rnafm_checkpoint = rnafm_cfg.get("checkpoint_path")
-        rnafm_model_raw, alphabet = load_rnafm(rnafm_checkpoint, trust_local_checkpoint=True)
-        rnafm_model_raw = rnafm_model_raw.to(device)
-
-        def _collate(batch):
-            regions, runs, sws, labels, on_seqs, off_seqs = zip(*batch)
-            sequences = [normalize_pair_sequence(on, off) for on, off in zip(on_seqs, off_seqs)]
-            tokens = tokenize_rnafm_sequences(alphabet, sequences)
-            return (
-                tokens,
-                torch.stack(regions),
-                torch.stack(runs),
-                sws[0],
-                torch.stack(labels),
-            )
-        collate_fn = _collate
-
     if dist_info["distributed"]:
         train_sampler = DistributedSampler(train_dataset, num_replicas=dist_info["world_size"], rank=dist_info["rank"], shuffle=True, seed=seed)
         val_sampler = DistributedSampler(val_dataset, num_replicas=dist_info["world_size"], rank=dist_info["rank"], shuffle=False)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, num_workers=num_workers, pin_memory=True, collate_fn=collate_fn)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, sampler=val_sampler, num_workers=num_workers, pin_memory=True, collate_fn=collate_fn)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, num_workers=num_workers, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, sampler=val_sampler, num_workers=num_workers, pin_memory=True)
     else:
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, collate_fn=collate_fn)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers, pin_memory=True, collate_fn=collate_fn)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers, pin_memory=True)
 
-    test_loader = DataLoader(test_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers, pin_memory=True, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=num_workers, pin_memory=True)
 
     if model_name == "BL3bSeedRegression":
         model = BL3bSeedRegression(model_cfg).to(device)
     elif model_name == "BL35FullFusion":
         model = BL35FullFusion(model_cfg).to(device)
-    elif model_name == "BL3RNAFMFusion":
-        model = BL3RNAFMFusion(
-            rnafm_model=rnafm_model_raw,
-            padding_idx=alphabet.padding_idx if alphabet else 0,
-            config=model_cfg,
-        ).to(device)
     else:
         model = BL3HardPrior(model_cfg).to(device)
     if dist_info["distributed"]:
