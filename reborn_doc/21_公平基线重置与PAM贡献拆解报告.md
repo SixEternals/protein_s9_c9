@@ -120,12 +120,91 @@ BL5-v4-PAM 的历史 run 使用 `seed=42, split_mode=sgrna_safe`，其 `make_spl
 
 ---
 
-## 7. 后续计划
+## 5. 已发现的风险（必须披露）
 
-1. **等 NoPAM 训练完成**（预计凌晨 03:30）
-2. **导出 NoPAM test_predictions.csv**
-3. **执行 Paired Comparison**：
-   - 样本级对比：同一个 test sample 在 BL0b / NoPAM / PAM 上的 probability 差异
-   - 统计 PAM 带来的平均 Δprobability 和 ΔAUPRC
-4. **更新 `results/experiments.csv`**
-5. **生成最终结论报告**：PAM Encoder 是否值得保留
+### 5.1 PAM Shortcut 信号
+
+对 formal split 的 train/val/test 分别统计 PAM 分布：
+
+| Split | NGG 样本数 | non-NGG 样本数 | non-NGG positive | non-NGG negative | non-NGG positive_ratio |
+|:---|---:|---:|---:|---:|---:|
+| Train | 4,690,641 | 6,854 | 6,854 | **0** | **100%** |
+| Val | 740,806 | 746 | 746 | **0** | **100%** |
+| Test | 953,810 | 516 | 516 | **0** | **100%** |
+
+**结论**：数据集中所有 non-NGG PAM 样本均为 positive。模型可能学到 shortcut：
+> "如果 PAM 不是 NGG，就更可能是 positive。"
+
+这**必须**在论文中明确披露，也是 PAM shuffle control 实验（任务 4.3）的核心动机。
+
+### 5.2 Leakage 检查通过
+
+- **Exact duplicate**：train-test 零重复（key1/key2/key3 均通过）
+- **sgRNA_type overlap**：train/val/test 无 sgRNA_type 交集
+- **Split 一致性**：BL0b、BL5-v4-PAM 使用完全相同的 test set（954,326 / 3,057 / 951,269 / 72）
+
+---
+
+## 6. 已准备好的脚本和配置（全部就绪，等 NoPAM 完成后一键执行）
+
+| 任务 | 脚本/配置 | 目的 | 状态 |
+|:---|:---|:---|:---:|
+| **4.2 分层评估** | `scripts/eval_stratified_by_pam.py` | All / NGG-only / non-NGG-only 三模型对比 | ⏳ 待跑 |
+| **4.3 PAM shuffle control** | `configs/bl5_v4_pam_shuffle_control.yaml` + `train_bl5.py --shuffle-pam` | 验证 PAM 信息是否被真实利用 | ⏳ 待跑 |
+| **5.1 per-sgRNA AUPRC** | `scripts/per_sgrna_and_pam_analysis.py` | 按 sgRNA_type 拆解 AUPRC 差异 | ⏳ 待跑 |
+| **5.2 per-PAM metrics** | `scripts/per_sgrna_and_pam_analysis.py` | 按 PAM 类型拆解概率和 AUPRC | ⏳ 待跑 |
+| **5.3 Paired comparison** | `scripts/paired_comparison.py` | 同一样本在三模型下的 probability 差异 | ⏳ 待跑 |
+| **6 kNN baseline** | `scripts/knn_baseline.py` | 验证模型是否只是"查相似题" | ⏳ 待跑 |
+| **3.3 最近邻相似性** | `scripts/train_test_nearest_neighbor.py` | test 到 train 的最小 Hamming 距离分布 | 🔄 后台运行 |
+| **9 in-silico perturbation** | `scripts/in_silico_perturbation.py` | PAM / seed mismatch / consecutive mismatch 扰动 | ⏳ 待跑 |
+| **最终报告** | `results/anti_memorization_validation_report.md` | 汇总所有证据链 | ⏳ 待生成 |
+
+---
+
+## 7. 执行顺序（NoPAM 完成后）
+
+```text
+1. 等待 NoPAM 训练完成（tmux nopam，预计 03:30）
+2. 自动执行 post-NoPAM 分析流水线（nohup PID 330256）：
+   ├── 分层评估（All / NGG-only / non-NGG-only）
+   ├── Paired comparison
+   ├── per-sgRNA / per-PAM 分析
+   ├── kNN baseline
+   └── 贡献拆解报告
+3. 手动执行 PAM shuffle control 训练
+4. 手动执行 in-silico perturbation
+5. 生成 anti_memorization_validation_report.md 总报告
+```
+
+---
+
+## 8. 关键文件清单
+
+### 已完成
+| 文件 | 用途 |
+|:---|:---|
+| `formal_split_bl5_seed42.json` | 统一 split，三个模型共用 |
+| `results/formal_split_bl5_seed42_audit.json` / `.md` | Split 核验报告 |
+| `results/fair_split_comparison_audit.json` / `.md` | 三模型 split 一致性确认 |
+| `results/leakage_exact_duplicate_audit.json` / `.md` | Exact duplicate 检查 |
+| `results/leakage_sgrna_type_audit.json` / `.md` | sgRNA_type 泄漏检查 |
+| `results/pam_distribution_by_split.csv` / `.md` | PAM 分布统计（含 non-NGG 100% positive 警报） |
+| `configs/bl0b_on_bl5split.yaml` | BL0b 配置 |
+| `configs/bl5_v4_pam.yaml` | PAM 配置 |
+| `results/bl0b_on_bl5split/summary.json` | BL0b 结果 |
+| `results/bl0b_on_bl5split/test_predictions.csv` | BL0b test 预测 |
+| `results/bl5_v4_pam/summary.json` | PAM 结果 |
+
+### 待生成
+| 文件 | 用途 |
+|:---|:---|
+| `results/bl5_v4_nopam_control/summary.json` | NoPAM 结果 |
+| `results/bl5_v4_nopam_control/test_predictions.csv` | NoPAM test 预测 |
+| `results/stratified_metrics_all_ngg_nongg.csv` / `.md` | 分层评估 |
+| `results/paired_comparison_test_predictions.csv` / `.md` | 配对对比 |
+| `results/per_sgrna_metrics.csv` / `.md` | per-sgRNA 分析 |
+| `results/per_pam_metrics.csv` / `.md` | per-PAM 分析 |
+| `results/knn_baseline_summary.json` / `.md` | kNN baseline |
+| `results/bl5_v4_contribution_decomposition.json` / `.md` | 贡献拆解 |
+| `results/in_silico_perturbation_examples.csv` / `.md` | 扰动实验 |
+| `results/anti_memorization_validation_report.md` | 总报告 |
