@@ -290,6 +290,7 @@ def make_live_collate(
     *,
     use_learnable_run: bool = False,
     use_pam_encoder: bool = False,
+    shuffle_pam: bool = False,
 ):
     def _collate(batch):
         runs, sws, labels, on_seqs, off_seqs = zip(*batch)
@@ -303,6 +304,9 @@ def make_live_collate(
             seed_weights = sws[0]
         if use_pam_encoder:
             pam_input = encode_pam_onehot(off_seqs)
+            if shuffle_pam:
+                perm = torch.randperm(pam_input.size(0))
+                pam_input = pam_input[perm]
         else:
             pam_input = torch.empty(0, dtype=torch.float32)
         return tokens, run_input, seed_weights, pam_input, torch.stack(labels)
@@ -734,6 +738,7 @@ def main() -> int:
         alphabet,
         use_learnable_run=use_learnable_run,
         use_pam_encoder=use_pam_encoder,
+        shuffle_pam=bool(config.get("training", {}).get("shuffle_pam", False)),
     )
     batch_size = int(training_cfg.get("batch_size", 128))
     num_workers = int(training_cfg.get("num_workers", 0))

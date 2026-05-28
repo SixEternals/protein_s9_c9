@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -28,7 +29,9 @@ if str(ROOT) not in sys.path:
 from datasets.cclmoff_dataset import CCLMoffFrameDataset, CCLMoffSample, load_cclmoff_dataframe
 from models.bl0_cclmoff import BL0CCLMoffConfig, build_bl0_with_rnafm
 from utils.config import load_config
+from utils.guardrails import check_eval_procedure, check_model_config, report_metrics
 from utils.rnafm import count_parameters, rnafm_model_specs, tokenize_rnafm_sequences
+from utils.sequence import normalize_sequence
 
 
 def setup_distributed() -> dict[str, Any]:
@@ -218,8 +221,75 @@ def group_safe_split(df, split_cfg: dict[str, Any], seed: int) -> dict[str, Any]
     raise RuntimeError(f"could not create a group-safe split with both labels in every split; last counts={last_error}")
 
 
+def formal_group_json_split(df, split_cfg: dict[str, Any]) -> dict[str, Any]:
+    group_column = str(split_cfg.get("group_column", "sgRNA_type"))
+    split_path = Path(split_cfg["formal_split_json"])
+    if not split_path.exists():
+        raise FileNotFoundError(f"formal split JSON not found: {split_path}")
+    if group_column not in df.columns:
+        raise ValueError(f"group split column not found: {group_column}")
+
+    payload = json.loads(split_path.read_text(encoding="utf-8"))
+    groups_by_split = {
+        name: set(str(item) for item in payload["splits"][name]["sgRNA_types"])
+        for name in ("train", "val", "test")
+    }
+    overlaps = {
+        "train_val": sorted(groups_by_split["train"] & groups_by_split["val"]),
+        "train_test": sorted(groups_by_split["train"] & groups_by_split["test"]),
+        "val_test": sorted(groups_by_split["val"] & groups_by_split["test"]),
+    }
+    if any(overlaps.values()):
+        raise RuntimeError(f"formal split group leakage detected: {overlaps}")
+
+    group_values = df[group_column].astype(str).to_numpy()
+    split_indices = {
+        name: np.flatnonzero(np.isin(group_values, sorted(groups_by_split[name]))).astype(np.int64)
+        for name in ("train", "val", "test")
+    }
+    assigned = sum(len(values) for values in split_indices.values())
+    if assigned != len(df):
+        raise ValueError(f"formal split assigned {assigned} rows but dataframe has {len(df)} rows")
+
+    for name, idx in split_indices.items():
+        expected = payload["splits"][name]
+        labels = df.iloc[idx]["label"].to_numpy()
+        counts = label_counts(labels)
+        if int(expected["samples"]) != int(len(idx)):
+            raise ValueError(f"{name} row count mismatch against formal split JSON")
+        if int(expected["observed_positive"]) != counts["observed_positive"]:
+            raise ValueError(f"{name} observed_positive mismatch against formal split JSON")
+        if int(expected["unobserved_candidate"]) != counts["unobserved_candidate"]:
+            raise ValueError(f"{name} unobserved_candidate mismatch against formal split JSON")
+
+    return {
+        "strategy": "formal_group_json",
+        "train": split_indices["train"],
+        "val": split_indices["val"],
+        "test": split_indices["test"],
+        "metadata": {
+            "formal_split_json": str(split_path),
+            "source_version": payload.get("version"),
+            "seed": payload.get("seed"),
+            "split_mode": payload.get("split_mode"),
+            "group_column": group_column,
+            "leakage_safe_by_sgrna_type": True,
+            "group_counts": {
+                name: int(payload["splits"][name]["sgRNA_type_count"])
+                for name in ("train", "val", "test")
+            },
+            "groups": {
+                name: sorted(groups_by_split[name])
+                for name in ("train", "val", "test")
+            },
+        },
+    }
+
+
 def make_split(df, split_cfg: dict[str, Any], seed: int) -> dict[str, Any]:
     strategy = str(split_cfg.get("strategy", "sgRNA_type_group"))
+    if strategy == "formal_group_json":
+        return formal_group_json_split(df, split_cfg)
     if strategy == "sgRNA_type_group":
         return group_safe_split(df, split_cfg, seed)
     if strategy == "row_stratified":
@@ -337,6 +407,55 @@ def evaluate(
     labels_np = np.concatenate(labels_all) if labels_all else np.array([], dtype=np.float32)
     probs_np = np.concatenate(probs_all) if probs_all else np.array([], dtype=np.float32)
     return metric_payload(labels_np, probs_np, losses)
+
+
+@torch.no_grad()
+def predict_probabilities(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    precision: str,
+) -> np.ndarray:
+    model.eval()
+    probs_all: list[np.ndarray] = []
+    autocast_enabled = device.type == "cuda" and precision in {"fp16", "bf16"}
+    autocast_dtype = torch.float16 if precision == "fp16" else torch.bfloat16
+    with torch.no_grad():
+        for tokens, _labels in loader:
+            tokens = tokens.to(device, non_blocking=True)
+            with torch.autocast(device_type=device.type, dtype=autocast_dtype, enabled=autocast_enabled):
+                logits = model(tokens)
+            probs_all.append(torch.sigmoid(logits.float()).detach().cpu().numpy())
+    return np.concatenate(probs_all) if probs_all else np.array([], dtype=np.float32)
+
+
+def write_test_predictions(
+    output_path: Path,
+    df: pd.DataFrame,
+    test_indices: np.ndarray,
+    probabilities: np.ndarray,
+) -> None:
+    test_df = df.iloc[test_indices].reset_index(drop=True)
+    if len(test_df) != len(probabilities):
+        raise ValueError(f"prediction count mismatch: rows={len(test_df)} probs={len(probabilities)}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    direction = (
+        test_df["Direction"].fillna("").astype(str)
+        if "Direction" in test_df.columns
+        else pd.Series([""] * len(test_df))
+    )
+    out = pd.DataFrame(
+        {
+            "sgRNA_type": test_df["sgRNA_type"].astype(str),
+            "on_seq": test_df["sgRNA_seq"].astype(str),
+            "off_seq": test_df["off_seq"].astype(str),
+            "PAM": [normalize_sequence(seq, length=23)[20:23] for seq in test_df["off_seq"].astype(str)],
+            "label": test_df["label"].astype(int),
+            "probability": probabilities.astype(np.float32),
+            "Direction": direction,
+        }
+    )
+    out.to_csv(output_path, index=False)
 
 
 def build_optimizer(model: torch.nn.Module, config: dict[str, Any]) -> torch.optim.Optimizer:
@@ -509,6 +628,8 @@ def train(config_path: Path) -> dict[str, Any]:
     dist_info = setup_distributed()
     main_process = is_main_process(dist_info)
     config = load_config(config_path)
+    if "use_rnafm" in config or "split_mode" in config:
+        check_model_config(config)
     seed = int(config.get("seed", 42))
     torch.manual_seed(seed + int(dist_info["rank"]))
     np.random.seed(seed)
@@ -523,9 +644,17 @@ def train(config_path: Path) -> dict[str, Any]:
     if main_process:
         config_copy_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    dataset_cfg = dict(config.get("dataset", {}))
+    required_columns = tuple(
+        dataset_cfg.get(
+            "required_columns",
+            ("sgRNA_seq", "off_seq", "label", "sgRNA_type", "id"),
+        )
+    )
     df = load_cclmoff_dataframe(
         config["dataset"]["csv_path"],
-        max_rows=config.get("dataset", {}).get("max_rows"),
+        max_rows=dataset_cfg.get("max_rows"),
+        required_columns=required_columns,
     )
     split_info = make_split(df, dict(config.get("split", {})), seed)
     split_indices = {name: split_info[name] for name in ("train", "val", "test")}
@@ -688,9 +817,16 @@ def train(config_path: Path) -> dict[str, Any]:
 
     if best_epoch == 0:
         raise RuntimeError("training finished without a valid best checkpoint")
+    check_eval_procedure(best_checkpoint, checkpoint_type="best", require_exists=True)
     load_best_checkpoint(best_checkpoint, model)
     model.to(device)
     test_metrics = evaluate(unwrap_model(model), test_loader, device, precision, max_batches=max_eval_batches)
+    report_metrics(test_metrics.get("auroc"), test_metrics.get("auprc"), config.get("split_mode", split_info["strategy"]))
+    test_predictions_path = None
+    if bool(config.get("outputs", {}).get("export_test_predictions", False)):
+        test_predictions_path = output_dir / "test_predictions.csv"
+        probabilities = predict_probabilities(unwrap_model(model), test_loader, device, precision)
+        write_test_predictions(test_predictions_path, df, split_indices["test"], probabilities)
     train_seconds = time.time() - start_time
     gpu_mem = "cpu"
     if device.type == "cuda":
@@ -751,6 +887,7 @@ def train(config_path: Path) -> dict[str, Any]:
             "epoch_metrics": str(output_dir / "epoch_metrics.csv"),
             "split_summary": str(output_dir / "split_summary.json"),
             "summary": str(output_dir / "summary.json"),
+            "test_predictions": str(test_predictions_path) if test_predictions_path is not None else None,
         },
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
