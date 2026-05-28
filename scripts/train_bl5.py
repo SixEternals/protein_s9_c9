@@ -118,6 +118,85 @@ def make_split(labels: np.ndarray, seed: int, group_labels: np.ndarray | None) -
     }
 
 
+def formal_group_json_split(
+    labels: np.ndarray,
+    group_labels: np.ndarray,
+    split_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """Load a pre-computed formal split and assign indices by group membership."""
+    import pandas as pd
+
+    split_path = Path(split_cfg["formal_split_json"])
+    if not split_path.exists():
+        raise FileNotFoundError(f"formal split JSON not found: {split_path}")
+    payload = json.loads(split_path.read_text(encoding="utf-8"))
+
+    groups_by_split = {
+        name: set(str(item) for item in payload["splits"][name]["sgRNA_types"])
+        for name in ("train", "val", "test")
+    }
+
+    overlaps = {
+        "train_val": sorted(groups_by_split["train"] & groups_by_split["val"]),
+        "train_test": sorted(groups_by_split["train"] & groups_by_split["test"]),
+        "val_test": sorted(groups_by_split["val"] & groups_by_split["test"]),
+    }
+    if any(overlaps.values()):
+        raise RuntimeError(f"formal split group leakage detected: {overlaps}")
+
+    indices = np.arange(len(labels), dtype=np.int64)
+    group_str = group_labels.astype(str)
+    split_indices = {
+        name: indices[np.isin(group_str, sorted(groups_by_split[name]))]
+        for name in ("train", "val", "test")
+    }
+
+    assigned = sum(len(v) for v in split_indices.values())
+    if assigned != len(labels):
+        raise ValueError(f"formal split assigned {assigned} rows but data has {len(labels)} rows")
+
+    for name, idx in split_indices.items():
+        expected = payload["splits"][name]
+        pos = int((labels[idx] == 1).sum())
+        neg = int((labels[idx] == 0).sum())
+        if int(expected["samples"]) != len(idx):
+            raise ValueError(f"{name} row count mismatch against formal split JSON")
+        if int(expected["observed_positive"]) != pos:
+            raise ValueError(f"{name} observed_positive mismatch against formal split JSON")
+        if int(expected["unobserved_candidate"]) != neg:
+            raise ValueError(f"{name} unobserved_candidate mismatch against formal split JSON")
+
+    return {
+        "train": split_indices["train"],
+        "val": split_indices["val"],
+        "test": split_indices["test"],
+        "metadata": {
+            "split_source": "formal_group_json",
+            "formal_group_json_path": str(split_path),
+            "source_version": payload.get("version"),
+            "seed": payload.get("seed"),
+            "split_mode": payload.get("split_mode"),
+            "group_column": split_cfg.get("group_column", "sgRNA_type"),
+            "leakage_safe_by_sgrna_type": True,
+            "group_counts": {
+                name: int(payload["splits"][name]["sgRNA_type_count"])
+                for name in ("train", "val", "test")
+            },
+            "groups": {name: sorted(groups_by_split[name]) for name in ("train", "val", "test")},
+            "label_counts": {
+                name: {
+                    "samples": int(payload["splits"][name]["samples"]),
+                    "observed_positive": int(payload["splits"][name]["observed_positive"]),
+                    "unobserved_candidate": int(payload["splits"][name]["unobserved_candidate"]),
+                    "positive_ratio": float(payload["splits"][name]["positive_ratio"]),
+                }
+                for name in ("train", "val", "test")
+            },
+            "leakage_check": {k: v for k, v in overlaps.items()},
+        },
+    }
+
+
 def enforce_run_states_20nt(run_features: np.ndarray) -> np.ndarray:
     """Recompute C9 run-state bits inside positions 1-20 only.
 
@@ -353,6 +432,54 @@ def evaluate(
     return metric_payload(labels_np, probs_np, [float(x) for x in losses_np])
 
 
+@torch.no_grad()
+def predict_probabilities(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    dist_info: dict[str, Any],
+    max_batches: int | None = None,
+) -> np.ndarray:
+    model.eval()
+    probs_all: list[np.ndarray] = []
+    for batch_index, batch in enumerate(loader):
+        if max_batches is not None and batch_index >= max_batches:
+            break
+        tokens_or_emb, runs, sw, pam_input, _labels = to_device(batch, device)
+        logits = model(tokens_or_emb, runs, sw, pam_input)
+        probs_all.append(torch.sigmoid(logits.squeeze(-1)).detach().cpu().numpy())
+    probs_np = gather_numpy(np.concatenate(probs_all), dist_info)
+    return probs_np
+
+
+def write_test_predictions(
+    csv_path: str,
+    test_indices: np.ndarray,
+    probabilities: np.ndarray,
+    output_path: Path,
+) -> None:
+    import pandas as pd
+
+    cols = ["sgRNA_type", "sgRNA_seq", "off_seq", "label"]
+    df = pd.read_csv(csv_path, usecols=lambda c: c in cols or c == "Direction")
+    test_df = df.iloc[test_indices].reset_index(drop=True)
+    if len(test_df) != len(probabilities):
+        raise ValueError(f"prediction count mismatch: rows={len(test_df)} probs={len(probabilities)}")
+    out = pd.DataFrame(
+        {
+            "sgRNA_type": test_df["sgRNA_type"].astype(str),
+            "on_seq": test_df["sgRNA_seq"].astype(str),
+            "off_seq": test_df["off_seq"].astype(str),
+            "PAM": [str(seq)[20:23] for seq in test_df["off_seq"].astype(str)],
+            "label": test_df["label"].astype(int),
+            "probability": probabilities.astype(np.float32),
+            "Direction": test_df["Direction"].astype(str) if "Direction" in test_df.columns else "",
+        }
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(output_path, index=False)
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -573,7 +700,28 @@ def main() -> int:
         if len(group_labels) != len(arrays.labels):
             raise ValueError(f"group label count mismatch: {len(group_labels)} vs {len(arrays.labels)}")
 
-    split_indices = make_split(arrays.labels.astype(np.int64), seed, group_labels)
+    split_cfg = config.get("split", {})
+    if split_cfg.get("strategy") == "formal_group_json" and split_cfg.get("formal_split_json"):
+        split_result = formal_group_json_split(
+            arrays.labels.astype(np.int64),
+            group_labels,
+            split_cfg,
+        )
+        split_indices = {
+            "train": split_result["train"],
+            "val": split_result["val"],
+            "test": split_result["test"],
+        }
+        split_metadata = split_result["metadata"]
+    else:
+        split_indices = make_split(arrays.labels.astype(np.int64), seed, group_labels)
+        split_metadata = {
+            "split_source": "make_split",
+            "seed": seed,
+            "split_mode": config.get("split_mode"),
+            "group_column": data_cfg.get("group_column", "sgRNA_type") if group_labels is not None else None,
+        }
+
     train_dataset = BL5Dataset(arrays, split_indices["train"])
     val_dataset = BL5Dataset(arrays, split_indices["val"])
     test_dataset = BL5Dataset(arrays, split_indices["test"])
@@ -851,6 +999,18 @@ def main() -> int:
         max_batches=max_eval_batches,
     )
 
+    test_predictions_path = None
+    if is_main_process(dist_info) and bool(config.get("outputs", {}).get("export_test_predictions", False)):
+        test_predictions_path = output_dir / "test_predictions.csv"
+        probabilities = predict_probabilities(
+            model_for_train, test_loader, device, dist_info, max_batches=max_eval_batches
+        )
+        csv_path = data_cfg.get("cclmoff_csv")
+        if csv_path:
+            write_test_predictions(csv_path, split_indices["test"], probabilities, test_predictions_path)
+        else:
+            test_predictions_path = None
+
     if is_main_process(dist_info):
         report_metrics(test_metrics.get("auroc"), test_metrics.get("auprc"), config.get("split_mode"))
         train_seconds = time.time() - start_time
@@ -878,6 +1038,13 @@ def main() -> int:
             "best_metric_name": monitor,
             "best_metric_value": float(best_metric),
             "test_metrics": test_metrics,
+            "split": split_metadata,
+            "artifacts": {
+                "best_checkpoint": str(best_ckpt_path),
+                "epoch_metrics": str(output_dir / "epoch_metrics.csv"),
+                "summary": str(output_dir / "summary.json"),
+                "test_predictions": str(test_predictions_path) if test_predictions_path is not None else None,
+            },
             "notes": (
                 f"Fine-tuned RNA-FM + {'LearnableRunEncoder' if use_learnable_run else 'Run token CNN'} "
                 f"+ {'raw RNA-FM/Run simple concat MLP' if fusion_type == 'simple_concat' else 'Cross-Attn + Softmax Gate'}; "

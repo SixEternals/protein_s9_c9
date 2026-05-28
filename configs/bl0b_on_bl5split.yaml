@@ -1,0 +1,67 @@
+# BL0b-on-BL5split: official RNA-FM CLS + MLP baseline on the formal BL5 split.
+model: bl0b_rnafm_mlp
+version: BL0b-on-BL5split
+seed: 42
+device: auto
+
+use_rnafm: true
+freeze_rnafm: false
+split_mode: sgrna_safe
+
+dataset:
+  csv_path: data/cclmoff/09212024_CCLMoff_dataset.csv
+  max_rows: null
+  replace_t_with_u: true
+  required_columns: [sgRNA_seq, off_seq, label, sgRNA_type, id, Direction]
+
+split:
+  strategy: formal_group_json
+  formal_split_json: formal_split_bl5_seed42.json
+  group_column: sgRNA_type
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  allow_download: false
+  freeze: false
+  freeze_rnafm: false
+  repr_layer: 12
+
+model_config:
+  input_dim: 640
+  head_type: official_mlp
+  transformer_dim: 640
+  transformer_layers: 1
+  attention_heads: 8
+  ffn_dim: 1024
+  mlp_hidden_dim: 64
+  dropout: 0.2
+  pool: cls
+
+training:
+  epochs: 10
+  batch_size: 1024
+  eval_batch_size: 2048
+  head_learning_rate: 0.001
+  rnafm_learning_rate: 0.0005
+  warmup_epochs: 5
+  gradient_clip: 1.0
+  weight_decay: 0.00001
+  num_workers: 12
+  use_balanced_sampler: true
+  precision: bf16
+  monitor: auprc
+  monitor_mode: max
+  log_every: 100
+  max_train_batches: null
+  max_eval_batches: null
+
+hardware:
+  gpu_count: 2
+  use_amp: true
+  use_ddp: true
+
+outputs:
+  output_dir: results/bl0b_on_bl5split
+  experiment_csv: results/experiments.csv
+  export_test_predictions: true
+  notes: official BL0b RNA-FM CLS + 640-64-1 MLP on formal BL5 seed42 split
