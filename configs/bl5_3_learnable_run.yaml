@@ -1,0 +1,66 @@
+# BL5-3-LearnableRun: replace hand-crafted Run states with learnable base-pair tokens.
+version: "BL5-3-LearnableRun"
+description: "fine-tune RNA-FM + LearnableRunEncoder + Cross-Attn + Gated Fusion"
+
+model:
+  name: BL5RunOnlyDynamicFusion
+  use_rnafm: true
+  freeze_rnafm: false
+  use_run: true
+  use_learnable_run: true
+  use_region: false
+  repr_layer: 12
+  rnafm_dim: 640
+  d_model: 128
+  cross_attn_heads: 4
+  cross_attn_layers: 1
+  gate_hidden_dim: 64
+  mlp_hidden: 128
+  dropout: 0.2
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  freeze_rnafm: false
+  repr_layer: 12
+
+training:
+  epochs: 10
+  batch_size: 1024
+  lr_transformer: 5.0e-4
+  lr_run_encoder: 1.0e-3
+  lr_attn: 1.0e-3
+  lr_mlp: 1.0e-3
+  lr: 1.0e-3
+  warmup_epochs: 5
+  optimizer: AdamW
+  use_param_groups: true
+  focal_loss: true
+  focal_gamma: 2.0
+  gradient_clip: 1.0
+  num_workers: 12
+  persistent_workers: true
+  prefetch_factor: 4
+  weight_decay: 1.0e-5
+  monitor: auprc
+  monitor_mode: max
+
+split_mode: sgrna_safe
+
+data:
+  cclmoff_csv: data/cclmoff/09212024_CCLMoff_dataset.csv
+  npz_path: data/cclmoff/cclmoff_9bit.npz
+  group_column: sgRNA_type
+
+evaluation:
+  checkpoint_type: best
+  report_metrics: [AUROC, AUPRC]
+  compare_baselines:
+    bl0b_auprc: 0.522282
+    bl5_3_run_only_auprc: 0.445172
+
+hardware:
+  gpu_count: 2
+  use_amp: true
+  use_ddp: true
+
+output_dir: results/bl5_3_learnable_run
