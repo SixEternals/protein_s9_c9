@@ -1,9 +1,9 @@
 # BL5-v4-PAM-shuffle-control: same architecture as BL5-v4-PAM,
-# but PAM one-hot features are shuffled within each batch.
+# but PAM one-hot features are shuffled within each split.
 # Purpose: verify whether PAM encoder uses true PAM information
 # or spurious correlations.
 version: "BL5-v4-PAM-shuffle-control"
-description: "BL5-v4-PAM with intra-batch PAM feature shuffling"
+description: "BL5-v4-PAM with within-split PAM feature shuffling"
 
 model:
   name: BL5RunOnlyDynamicFusion
@@ -47,11 +47,13 @@ training:
   num_workers: 12
   persistent_workers: true
   prefetch_factor: 4
-  find_unused_parameters: true
+  find_unused_parameters: false
   weight_decay: 1.0e-5
   monitor: auprc
   monitor_mode: max
   shuffle_pam: true
+  shuffle_pam_mode: within_split
+  shuffle_pam_seed: 42
 
 split_mode: sgrna_safe
 
@@ -74,8 +76,9 @@ hardware:
   use_amp: true
   use_ddp: true
 
+output_dir: results/bl5_v4_pam_shuffle_control
+
 outputs:
-  output_dir: results/bl5_v4_pam_shuffle_control
   experiment_csv: results/experiments.csv
   export_test_predictions: true
-  notes: "PAM shuffle control: PAM one-hot features are randomly permuted within each batch"
+  notes: "PAM shuffle control: PAM one-hot features are shuffled within each split (train/val/test separately), seed=42"

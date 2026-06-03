@@ -45,7 +45,7 @@ training:
   num_workers: 12
   persistent_workers: true
   prefetch_factor: 4
-  find_unused_parameters: true
+  find_unused_parameters: false
   weight_decay: 1.0e-5
   monitor: auprc
   monitor_mode: max
@@ -74,8 +74,10 @@ hardware:
   use_amp: true
   use_ddp: true
 
+output_dir: results/BL5-v4-NoPAM-control
+
 outputs:
-  output_dir: results/bl5_v4_nopam_control
+  output_dir: results/BL5-v4-NoPAM-control
   experiment_csv: results/experiments.csv
   export_test_predictions: true
   notes: "BL5-v4-NoPAM-control: identical hyperparameters to BL5-v4-PAM, use_pam_encoder=false, formal split"

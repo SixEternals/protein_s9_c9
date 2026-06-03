@@ -1,0 +1,28 @@
+# PAM Shuffle Audit
+- mode: within_split
+- seed: 42
+
+## train
+- samples: 4697495
+- same_position_ratio: 0.0
+- changed: 4697494
+- unchanged: 1
+- original_dist: {'TGG': 1564564, 'AGG': 1543374, 'CGG': 334251, 'GGG': 1248452, 'CCG': 44, 'CAG': 1140, 'TAG': 325, 'GGA': 517, 'AGA': 572, 'TGA': 677, 'CTG': 219, 'TGC': 124, 'GAG': 1182, 'AAA': 10, 'GAA': 31, 'GGC': 159, 'GGT': 70, 'GCG': 43, 'CAA': 11, 'AAG': 852, 'GTG': 264, 'ATG': 200, 'TTG': 57, 'ACG': 36, 'CGA': 80, 'TGT': 70, 'CGC': 31, 'AGC': 64, 'CGT': 9, 'AGT': 13, 'CAC': 3, 'TCG': 11, 'ACT': 2, 'GTA': 1, 'GCA': 4, 'GTT': 1, 'ATA': 2, 'ACC': 4, 'ACA': 4, 'TAA': 1, 'TAC': 1, 'AAC': 1, 'TAT': 4, 'TCA': 2, 'GCC': 3, 'CCC': 2, 'GAC': 2, 'CCT': 1, 'CCA': 2, 'AAT': 2, 'GAT': 1}
+- shuffled_dist: {'GGG': 1248452, 'AGG': 1543374, 'TGG': 1564564, 'CGG': 334251, 'GGA': 517, 'TAG': 325, 'TGT': 70, 'ATG': 200, 'CAG': 1140, 'TTG': 57, 'CCG': 44, 'CGC': 31, 'GAG': 1182, 'TGC': 124, 'AAG': 852, 'TGA': 677, 'CGA': 80, 'AGA': 572, 'GTG': 264, 'CTG': 219, 'GGC': 159, 'GCG': 43, 'ACG': 36, 'ACA': 4, 'GAA': 31, 'GCA': 4, 'AGC': 64, 'CGT': 9, 'AAA': 10, 'GGT': 70, 'ACC': 4, 'ACT': 2, 'AAT': 2, 'GTA': 1, 'AGT': 13, 'TAT': 4, 'GCC': 3, 'GAC': 2, 'ATA': 2, 'GAT': 1, 'TCG': 11, 'CAA': 11, 'CCC': 2, 'CAC': 3, 'TCA': 2, 'TAA': 1, 'CCA': 2, 'AAC': 1, 'CCT': 1, 'TAC': 1, 'GTT': 1}
+
+## val
+- samples: 741552
+- same_position_ratio: 0.0
+- changed: 741552
+- unchanged: 0
+- original_dist: {'AGG': 245939, 'TGG': 257037, 'GGG': 202298, 'CGG': 35532, 'TGA': 58, 'GCG': 4, 'CAG': 138, 'AAG': 107, 'GGT': 12, 'GAG': 90, 'ATG': 23, 'TAG': 55, 'AGA': 59, 'CCG': 7, 'GGC': 15, 'ACG': 15, 'CTG': 48, 'TCG': 5, 'CGC': 6, 'AGC': 11, 'GGA': 27, 'GTG': 22, 'CGA': 10, 'TGC': 7, 'TTG': 5, 'AGT': 5, 'CAA': 2, 'ATT': 1, 'CCA': 1, 'CCT': 2, 'GAA': 1, 'GAT': 1, 'TGT': 2, 'GCT': 2, 'AAC': 1, 'TTC': 1, 'ATA': 1, 'CAT': 1, 'ATC': 1}
+- shuffled_dist: {'TGG': 257037, 'AGG': 245939, 'GGG': 202298, 'CGG': 35532, 'GGA': 27, 'ATG': 23, 'GAG': 90, 'AGA': 59, 'CAG': 138, 'AAC': 1, 'AGC': 11, 'TCG': 5, 'CTG': 48, 'AAG': 107, 'TAG': 55, 'TGA': 58, 'GGT': 12, 'CGC': 6, 'GGC': 15, 'AGT': 5, 'GTG': 22, 'TGC': 7, 'ACG': 15, 'CGA': 10, 'CCG': 7, 'GCG': 4, 'CAT': 1, 'TTG': 5, 'ATA': 1, 'ATT': 1, 'TGT': 2, 'GAT': 1, 'CAA': 2, 'GCT': 2, 'ATC': 1, 'TTC': 1, 'CCT': 2, 'GAA': 1, 'CCA': 1}
+
+## test
+- samples: 954326
+- same_position_ratio: 2e-06
+- changed: 954324
+- unchanged: 2
+- original_dist: {'GGG': 279927, 'TGG': 304139, 'AGG': 312754, 'TGA': 27, 'CGG': 56990, 'CAG': 98, 'TAG': 31, 'AAG': 47, 'GAG': 107, 'ATG': 26, 'TTG': 7, 'AGA': 31, 'GCG': 7, 'GTG': 38, 'GGC': 8, 'TGC': 6, 'GGA': 31, 'CTG': 13, 'AGC': 7, 'ACT': 1, 'AGT': 2, 'CGA': 1, 'TGT': 5, 'CCG': 3, 'GAA': 1, 'ACG': 6, 'TCG': 1, 'GGT': 8, 'AAA': 1, 'CGC': 1, 'CAA': 2}
+- shuffled_dist: {'GGG': 279927, 'CGG': 56990, 'TGG': 304139, 'AGG': 312754, 'TGT': 5, 'AAG': 47, 'ATG': 26, 'CGA': 1, 'GAG': 107, 'CAG': 98, 'TGA': 27, 'ACG': 6, 'GGA': 31, 'TAG': 31, 'GGC': 8, 'GTG': 38, 'CGC': 1, 'AGA': 31, 'CTG': 13, 'GCG': 7, 'CCG': 3, 'TTG': 7, 'ACT': 1, 'TGC': 6, 'GGT': 8, 'AGC': 7, 'CAA': 2, 'AGT': 2, 'TCG': 1, 'AAA': 1, 'GAA': 1}
+

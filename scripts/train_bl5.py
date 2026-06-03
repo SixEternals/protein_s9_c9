@@ -253,9 +253,15 @@ class BL5Arrays:
 
 
 class BL5Dataset(Dataset):
-    def __init__(self, arrays: BL5Arrays, indices: np.ndarray):
+    def __init__(
+        self,
+        arrays: BL5Arrays,
+        indices: np.ndarray,
+        pam_shuffle_indices: np.ndarray | None = None,
+    ):
         self.arrays = arrays
         self.indices = indices.astype(np.int64)
+        self.pam_shuffle_indices = pam_shuffle_indices
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -269,7 +275,13 @@ class BL5Dataset(Dataset):
             run = torch.from_numpy(self.arrays.run_features[row]).float()
             sw = torch.from_numpy(self.arrays.seed_weights).float()
         label = torch.tensor(self.arrays.labels[row], dtype=torch.float32)
-        return run, sw, label, str(self.arrays.on_seqs[row]), str(self.arrays.off_seqs[row])
+        on_seq = str(self.arrays.on_seqs[row])
+        if self.pam_shuffle_indices is not None:
+            off_row = int(self.pam_shuffle_indices[idx])
+            off_seq = str(self.arrays.off_seqs[off_row])
+        else:
+            off_seq = str(self.arrays.off_seqs[row])
+        return run, sw, label, on_seq, off_seq
 
 
 class SequentialDistributedSampler(Sampler[int]):
@@ -291,6 +303,7 @@ def make_live_collate(
     use_learnable_run: bool = False,
     use_pam_encoder: bool = False,
     shuffle_pam: bool = False,
+    shuffle_pam_mode: str = "batch",
 ):
     def _collate(batch):
         runs, sws, labels, on_seqs, off_seqs = zip(*batch)
@@ -304,7 +317,7 @@ def make_live_collate(
             seed_weights = sws[0]
         if use_pam_encoder:
             pam_input = encode_pam_onehot(off_seqs)
-            if shuffle_pam:
+            if shuffle_pam and shuffle_pam_mode == "batch":
                 perm = torch.randperm(pam_input.size(0))
                 pam_input = pam_input[perm]
         else:
@@ -402,6 +415,22 @@ def gather_numpy(array: np.ndarray, dist_info: dict[str, Any]) -> np.ndarray:
     return np.concatenate([item for item in gathered if item is not None], axis=0)
 
 
+def restore_sequential_distributed_order(
+    gathered: np.ndarray,
+    dataset_len: int,
+    world_size: int,
+) -> np.ndarray:
+    """Restore output order from SequentialDistributedSampler rank-concat order."""
+    if world_size <= 1 or len(gathered) != dataset_len:
+        return gathered
+    positions = np.concatenate(
+        [np.arange(rank, dataset_len, world_size, dtype=np.int64) for rank in range(world_size)]
+    )
+    restored = np.empty_like(gathered)
+    restored[positions] = gathered
+    return restored
+
+
 @torch.no_grad()
 def evaluate(
     model: nn.Module,
@@ -461,6 +490,9 @@ def write_test_predictions(
     test_indices: np.ndarray,
     probabilities: np.ndarray,
     output_path: Path,
+    *,
+    pam_shuffle_indices: np.ndarray | None = None,
+    split_name: str = "test",
 ) -> None:
     import pandas as pd
 
@@ -469,15 +501,31 @@ def write_test_predictions(
     test_df = df.iloc[test_indices].reset_index(drop=True)
     if len(test_df) != len(probabilities):
         raise ValueError(f"prediction count mismatch: rows={len(test_df)} probs={len(probabilities)}")
+    if pam_shuffle_indices is not None and len(pam_shuffle_indices) != len(test_indices):
+        raise ValueError(
+            "pam shuffle index count mismatch: "
+            f"rows={len(test_indices)} shuffle={len(pam_shuffle_indices)}"
+        )
+    shuffle_df = (
+        df.iloc[pam_shuffle_indices].reset_index(drop=True)
+        if pam_shuffle_indices is not None
+        else test_df
+    )
+    pam_original = [str(seq)[20:23] for seq in test_df["off_seq"].astype(str)]
+    pam_shuffled = [str(seq)[20:23] for seq in shuffle_df["off_seq"].astype(str)]
     out = pd.DataFrame(
         {
+            "sample_index": test_indices.astype(np.int64),
             "sgRNA_type": test_df["sgRNA_type"].astype(str),
             "on_seq": test_df["sgRNA_seq"].astype(str),
             "off_seq": test_df["off_seq"].astype(str),
-            "PAM": [str(seq)[20:23] for seq in test_df["off_seq"].astype(str)],
+            "PAM_original": pam_original,
+            "PAM_shuffled": pam_shuffled,
+            "PAM": pam_original,
             "label": test_df["label"].astype(int),
             "probability": probabilities.astype(np.float32),
             "Direction": test_df["Direction"].astype(str) if "Direction" in test_df.columns else "",
+            "split": split_name,
         }
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -726,19 +774,95 @@ def main() -> int:
             "group_column": data_cfg.get("group_column", "sgRNA_type") if group_labels is not None else None,
         }
 
-    train_dataset = BL5Dataset(arrays, split_indices["train"])
-    val_dataset = BL5Dataset(arrays, split_indices["val"])
-    test_dataset = BL5Dataset(arrays, split_indices["test"])
+    # PAM shuffle (within-split) setup
+    shuffle_pam = bool(training_cfg.get("shuffle_pam", False))
+    shuffle_pam_mode = str(training_cfg.get("shuffle_pam_mode", "batch"))
+    shuffle_pam_seed = int(training_cfg.get("shuffle_pam_seed", 42))
+
+    def _make_pam_shuffle(indices: np.ndarray, seed: int) -> np.ndarray | None:
+        if len(indices) <= 1:
+            return None
+        rng = np.random.default_rng(seed)
+        perm = np.arange(len(indices))
+        rng.shuffle(perm)
+        return indices[perm]
+
+    train_shuffle = None
+    val_shuffle = None
+    test_shuffle = None
+    if shuffle_pam and shuffle_pam_mode == "within_split":
+        train_shuffle = _make_pam_shuffle(split_indices["train"], shuffle_pam_seed)
+        val_shuffle = _make_pam_shuffle(split_indices["val"], shuffle_pam_seed + 1)
+        test_shuffle = _make_pam_shuffle(split_indices["test"], shuffle_pam_seed + 2)
+
+    train_dataset = BL5Dataset(arrays, split_indices["train"], train_shuffle)
+    val_dataset = BL5Dataset(arrays, split_indices["val"], val_shuffle)
+    test_dataset = BL5Dataset(arrays, split_indices["test"], test_shuffle)
+
+    # PAM shuffle audit
+    if shuffle_pam and is_main_process(dist_info):
+        from collections import Counter
+
+        def _pam_dist(off_seqs, idx_arr):
+            pams = [str(off_seqs[i])[-3:] for i in idx_arr]
+            return dict(Counter(pams))
+
+        def _same_ratio(orig, shuf):
+            if shuf is None:
+                return 1.0
+            same = int(np.sum(orig == shuf))
+            return round(same / len(orig), 6)
+
+        audit = {
+            "shuffle_pam": True,
+            "shuffle_pam_mode": shuffle_pam_mode,
+            "shuffle_pam_seed": shuffle_pam_seed,
+            "splits": {},
+        }
+        for split_name, orig_idx, shuf_idx in [
+            ("train", split_indices["train"], train_shuffle),
+            ("val", split_indices["val"], val_shuffle),
+            ("test", split_indices["test"], test_shuffle),
+        ]:
+            changed = int(np.sum(orig_idx != shuf_idx)) if shuf_idx is not None else 0
+            unchanged = int(np.sum(orig_idx == shuf_idx)) if shuf_idx is not None else len(orig_idx)
+            audit["splits"][split_name] = {
+                "n_samples": len(orig_idx),
+                "original_dist": _pam_dist(arrays.off_seqs, orig_idx),
+                "shuffled_dist": _pam_dist(arrays.off_seqs, shuf_idx) if shuf_idx is not None else _pam_dist(arrays.off_seqs, orig_idx),
+                "same_position_ratio": _same_ratio(orig_idx, shuf_idx),
+                "changed": changed,
+                "unchanged": unchanged,
+            }
+        audit_dir = output_dir
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        (audit_dir / "pam_shuffle_audit.json").write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
+        md_lines = ["# PAM Shuffle Audit\n", f"- mode: {shuffle_pam_mode}\n", f"- seed: {shuffle_pam_seed}\n\n"]
+        for split_name, info in audit["splits"].items():
+            md_lines.append(f"## {split_name}\n")
+            md_lines.append(f"- samples: {info['n_samples']}\n")
+            md_lines.append(f"- same_position_ratio: {info['same_position_ratio']}\n")
+            md_lines.append(f"- changed: {info['changed']}\n")
+            md_lines.append(f"- unchanged: {info['unchanged']}\n")
+            md_lines.append(f"- original_dist: {info['original_dist']}\n")
+            md_lines.append(f"- shuffled_dist: {info['shuffled_dist']}\n\n")
+        (audit_dir / "pam_shuffle_audit.md").write_text("".join(md_lines), encoding="utf-8")
 
     rnafm_model, alphabet = load_rnafm(rnafm_cfg.get("checkpoint_path"), trust_local_checkpoint=True)
     rnafm_model = rnafm_model.to(device)
+    # Disable gradients for RNA-FM heads that are not used when return_contacts=False,
+    # so DDP can run with find_unused_parameters=False and avoid NCCL timeouts.
+    for name, param in rnafm_model.named_parameters():
+        if "contact_head" in name or "lm_head" in name:
+            param.requires_grad = False
 
     use_learnable_run = bool(model_cfg.get("use_learnable_run", False))
     collate_fn = make_live_collate(
         alphabet,
         use_learnable_run=use_learnable_run,
         use_pam_encoder=use_pam_encoder,
-        shuffle_pam=bool(config.get("training", {}).get("shuffle_pam", False)),
+        shuffle_pam=shuffle_pam,
+        shuffle_pam_mode=shuffle_pam_mode,
     )
     batch_size = int(training_cfg.get("batch_size", 128))
     num_workers = int(training_cfg.get("num_workers", 0))
@@ -1005,16 +1129,30 @@ def main() -> int:
     )
 
     test_predictions_path = None
-    if is_main_process(dist_info) and bool(config.get("outputs", {}).get("export_test_predictions", False)):
-        test_predictions_path = output_dir / "test_predictions.csv"
+    probabilities = None
+    if bool(config.get("outputs", {}).get("export_test_predictions", False)):
         probabilities = predict_probabilities(
             model_for_train, test_loader, device, dist_info, max_batches=max_eval_batches
         )
-        csv_path = data_cfg.get("cclmoff_csv")
-        if csv_path:
-            write_test_predictions(csv_path, split_indices["test"], probabilities, test_predictions_path)
-        else:
-            test_predictions_path = None
+        if is_main_process(dist_info):
+            probabilities = restore_sequential_distributed_order(
+                probabilities,
+                len(test_dataset),
+                int(dist_info.get("world_size", 1)),
+            )
+            test_predictions_path = output_dir / "test_predictions.csv"
+            csv_path = data_cfg.get("cclmoff_csv")
+            if csv_path:
+                write_test_predictions(
+                    csv_path,
+                    split_indices["test"],
+                    probabilities,
+                    test_predictions_path,
+                    pam_shuffle_indices=test_shuffle,
+                    split_name="test",
+                )
+            else:
+                test_predictions_path = None
 
     if is_main_process(dist_info):
         report_metrics(test_metrics.get("auroc"), test_metrics.get("auprc"), config.get("split_mode"))
