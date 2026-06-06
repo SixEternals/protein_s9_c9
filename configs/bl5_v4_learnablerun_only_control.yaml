@@ -1,0 +1,73 @@
+# BL5-v4-LearnableRun-only-control: component-level ablation baseline.
+# Purpose: measure LearnableRun single-view performance without RNA-FM or PAM.
+version: "BL5-v4-LearnableRun-only-control"
+description: "LearnableRunEncoder only, no RNA-FM, no PAM Encoder"
+
+model:
+  name: BL5RunOnlyDynamicFusion
+  use_rnafm: false
+  freeze_rnafm: false
+  use_run: true
+  use_learnable_run: true
+  use_region: false
+  fusion_type: run_only
+  use_pam_encoder: false
+  d_model: 128
+  mlp_hidden: 256
+  mlp_hidden2: 64
+  mlp_activation: relu
+  dropout: 0.3
+  dropout2: 0.2
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  freeze_rnafm: false
+  repr_layer: 12
+
+training:
+  epochs: 10
+  batch_size: 1024
+  lr_run_encoder: 1.0e-3
+  lr_mlp: 1.0e-3
+  lr: 1.0e-3
+  warmup_epochs: 5
+  optimizer: AdamW
+  use_param_groups: true
+  focal_loss: true
+  focal_gamma: 2.0
+  gradient_clip: 1.0
+  num_workers: 12
+  persistent_workers: true
+  prefetch_factor: 4
+  find_unused_parameters: false
+  weight_decay: 1.0e-5
+  monitor: auprc
+  monitor_mode: max
+
+split_mode: sgrna_safe
+
+split:
+  strategy: formal_group_json
+  formal_split_json: formal_split_bl5_seed42.json
+  group_column: sgRNA_type
+
+data:
+  cclmoff_csv: data/cclmoff/09212024_CCLMoff_dataset.csv
+  npz_path: data/cclmoff/cclmoff_9bit.npz
+  group_column: sgRNA_type
+
+evaluation:
+  checkpoint_type: best
+  report_metrics: [AUROC, AUPRC]
+
+hardware:
+  gpu_count: 2
+  use_amp: true
+  use_ddp: true
+
+output_dir: results/bl5_v4_learnablerun_only_control
+
+outputs:
+  experiment_csv: results/experiments.csv
+  export_test_predictions: true
+  notes: "LearnableRun-only ablation on formal BL5 split; use_rnafm=false; use_pam_encoder=false; Run positions 1-20 only; best.pt test evaluation"

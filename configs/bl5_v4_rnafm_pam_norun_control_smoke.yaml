@@ -1,0 +1,66 @@
+# BL5-v4-RNAFM-PAM-noRun-control smoke test
+version: "BL5-v4-RNAFM-PAM-noRun-smoke"
+description: "smoke test: RNA-FM CLS + PAM Encoder concat, no Run"
+
+model:
+  name: BL5RunOnlyDynamicFusion
+  use_rnafm: true
+  freeze_rnafm: false
+  use_run: false
+  use_learnable_run: false
+  use_region: false
+  fusion_type: rnafm_pam_concat
+  rna_pooling: cls
+  use_pam_encoder: true
+  pam_dim: 16
+  repr_layer: 12
+  rnafm_dim: 640
+  d_model: 128
+  classifier_hidden: 256
+  mlp_activation: relu
+  dropout: 0.3
+  dropout2: 0.2
+
+rnafm:
+  checkpoint_path: data/rnafm/checkpoints/RNA-FM_pretrained.pth
+  freeze_rnafm: false
+  repr_layer: 12
+
+training:
+  epochs: 2
+  batch_size: 256
+  lr_transformer: 5.0e-4
+  lr_pam_encoder: 1.0e-3
+  lr_mlp: 1.0e-3
+  lr: 1.0e-3
+  warmup_epochs: 1
+  optimizer: AdamW
+  use_param_groups: true
+  focal_loss: true
+  focal_gamma: 2.0
+  gradient_clip: 1.0
+  num_workers: 4
+  persistent_workers: true
+  prefetch_factor: 2
+  find_unused_parameters: true
+  weight_decay: 1.0e-5
+  monitor: auprc
+  monitor_mode: max
+
+split_mode: sgrna_safe
+
+data:
+  cclmoff_csv: data/cclmoff/09212024_CCLMoff_dataset.csv
+  npz_path: data/cclmoff/cclmoff_9bit.npz
+  group_column: sgRNA_type
+
+evaluation:
+  checkpoint_type: best
+  report_metrics: [AUROC, AUPRC]
+
+hardware:
+  gpu_count: 2
+  use_amp: true
+  use_ddp: true
+
+output_dir: results/bl5_v4_rnafm_pam_norun_control_smoke

@@ -232,6 +232,7 @@ class BL5Arrays:
     def __init__(self, config: dict[str, Any]):
         model_cfg = config.get("model", {})
         self.use_learnable_run = bool(model_cfg.get("use_learnable_run", False))
+        self.use_run = bool(model_cfg.get("use_run", True))
         data_cfg = config.get("data", {})
         npz_value = data_cfg.get("npz_path")
         if not npz_value:
@@ -243,7 +244,7 @@ class BL5Arrays:
         self.labels = npz["y"].astype(np.float32, copy=False)
         self.on_seqs = npz["on_seq"]
         self.off_seqs = npz["off_seq"]
-        if self.use_learnable_run:
+        if self.use_learnable_run or not self.use_run:
             self.run_features = None
             self.seed_weights = np.empty((0,), dtype=np.float32)
         else:
@@ -268,7 +269,7 @@ class BL5Dataset(Dataset):
 
     def __getitem__(self, idx: int):
         row = int(self.indices[idx])
-        if self.arrays.use_learnable_run:
+        if self.arrays.use_learnable_run or not getattr(self.arrays, "use_run", True):
             run = torch.empty(0, dtype=torch.long)
             sw = torch.empty(0, dtype=torch.float32)
         else:
@@ -300,6 +301,8 @@ class SequentialDistributedSampler(Sampler[int]):
 def make_live_collate(
     alphabet,
     *,
+    use_rnafm: bool = True,
+    use_run: bool = True,
     use_learnable_run: bool = False,
     use_pam_encoder: bool = False,
     shuffle_pam: bool = False,
@@ -307,9 +310,15 @@ def make_live_collate(
 ):
     def _collate(batch):
         runs, sws, labels, on_seqs, off_seqs = zip(*batch)
-        sequences = [normalize_pair_sequence(on, off) for on, off in zip(on_seqs, off_seqs)]
-        tokens = tokenize_rnafm_sequences(alphabet, sequences)
-        if use_learnable_run:
+        if use_rnafm:
+            sequences = [normalize_pair_sequence(on, off) for on, off in zip(on_seqs, off_seqs)]
+            tokens = tokenize_rnafm_sequences(alphabet, sequences)
+        else:
+            tokens = torch.empty(0, dtype=torch.long)
+        if not use_run:
+            run_input = torch.empty(0, dtype=torch.float32)
+            seed_weights = torch.empty(0, dtype=torch.float32)
+        elif use_learnable_run:
             run_input = encode_base_pair_indices(on_seqs, off_seqs)
             seed_weights = torch.empty(0, dtype=torch.float32)
         else:
@@ -582,9 +591,19 @@ def build_optimizer(model: BL5RunOnlyDynamicFusion, config: dict[str, Any]) -> t
     training_cfg = config.get("training", {})
     weight_decay = float(training_cfg.get("weight_decay", 1e-5))
     if training_cfg.get("use_param_groups", False):
-        rnafm_params = [p for p in model.rnafm_model.parameters() if p.requires_grad]
+        rnafm_model = getattr(model, "rnafm_model", None)
+        rnafm_params = (
+            [p for p in rnafm_model.parameters() if p.requires_grad]
+            if rnafm_model is not None
+            else []
+        )
         rnafm_ids = {id(p) for p in rnafm_params}
-        run_params = [p for p in model.run_encoder.parameters() if p.requires_grad]
+        run_encoder = getattr(model, "run_encoder", None)
+        run_params = (
+            [p for p in run_encoder.parameters() if p.requires_grad]
+            if run_encoder is not None
+            else []
+        )
         run_ids = {id(p) for p in run_params}
         pam_encoder = getattr(model, "pam_encoder", None)
         pam_params = (
@@ -732,11 +751,12 @@ def main() -> int:
     if dist_info["distributed"]:
         dist.barrier()
 
+    use_rnafm = bool(model_cfg.get("use_rnafm", True))
     freeze_rnafm = bool(model_cfg.get("freeze_rnafm", rnafm_cfg.get("freeze_rnafm", False)))
     fusion_type = str(model_cfg.get("fusion_type", "cross_attn_gate")).lower()
     rna_pooling = str(model_cfg.get("rna_pooling", "mean")).lower()
     use_pam_encoder = bool(model_cfg.get("use_pam_encoder", False))
-    if freeze_rnafm:
+    if use_rnafm and freeze_rnafm:
         raise ValueError("BL5-3 formal run requires model.freeze_rnafm=false")
 
     arrays = BL5Arrays(config)
@@ -848,17 +868,24 @@ def main() -> int:
             md_lines.append(f"- shuffled_dist: {info['shuffled_dist']}\n\n")
         (audit_dir / "pam_shuffle_audit.md").write_text("".join(md_lines), encoding="utf-8")
 
-    rnafm_model, alphabet = load_rnafm(rnafm_cfg.get("checkpoint_path"), trust_local_checkpoint=True)
-    rnafm_model = rnafm_model.to(device)
-    # Disable gradients for RNA-FM heads that are not used when return_contacts=False,
-    # so DDP can run with find_unused_parameters=False and avoid NCCL timeouts.
-    for name, param in rnafm_model.named_parameters():
-        if "contact_head" in name or "lm_head" in name:
-            param.requires_grad = False
+    if use_rnafm:
+        rnafm_model, alphabet = load_rnafm(rnafm_cfg.get("checkpoint_path"), trust_local_checkpoint=True)
+        rnafm_model = rnafm_model.to(device)
+        # Disable gradients for RNA-FM heads that are not used when return_contacts=False,
+        # so DDP can run with find_unused_parameters=False and avoid NCCL timeouts.
+        for name, param in rnafm_model.named_parameters():
+            if "contact_head" in name or "lm_head" in name:
+                param.requires_grad = False
+    else:
+        rnafm_model = None
+        alphabet = None
 
     use_learnable_run = bool(model_cfg.get("use_learnable_run", False))
+    use_run = bool(model_cfg.get("use_run", True))
     collate_fn = make_live_collate(
         alphabet,
+        use_rnafm=use_rnafm,
+        use_run=use_run,
         use_learnable_run=use_learnable_run,
         use_pam_encoder=use_pam_encoder,
         shuffle_pam=shuffle_pam,
@@ -910,7 +937,7 @@ def main() -> int:
 
     model = BL5RunOnlyDynamicFusion(
         rnafm_model=rnafm_model,
-        padding_idx=alphabet.padding_idx,
+        padding_idx=alphabet.padding_idx if alphabet else 0,
         config=config,
     ).to(device)
     optimizer = build_optimizer(model, config)
@@ -995,6 +1022,8 @@ def main() -> int:
                 "device": str(device),
                 "distributed": dist_info["distributed"],
                 "split_mode": config.get("split_mode"),
+                "use_rnafm": use_rnafm,
+                "use_run": use_run,
                 "freeze_rnafm": freeze_rnafm,
                 "use_learnable_run": use_learnable_run,
                 "use_pam_encoder": use_pam_encoder,
@@ -1010,8 +1039,9 @@ def main() -> int:
                 "test_metrics": test_metrics,
                 "notes": (
                     f"Eval-only recovery from best.pt after interrupted run; "
-                    f"Fine-tuned RNA-FM + {'LearnableRunEncoder' if use_learnable_run else 'Run token CNN'} "
-                    f"+ {'raw RNA-FM/Run simple concat MLP' if fusion_type == 'simple_concat' else 'Cross-Attn + Softmax Gate'}; "
+                    f"{'Fine-tuned RNA-FM + ' if use_rnafm else ''}"
+                    f"{'PAM Encoder' if fusion_type == 'pam_only' else 'LearnableRunEncoder' if use_learnable_run else 'Run token CNN'} "
+                    f"+ {'raw RNA-FM/Run simple concat MLP' if fusion_type == 'simple_concat' else 'Cross-Attn + Softmax Gate' if fusion_type == 'cross_attn_gate' else 'PAM-Gated Fusion' if fusion_type == 'pam_gated_fusion' else 'PAM-only' if fusion_type == 'pam_only' else 'Run-only'}; "
                     f"rna_pooling={rna_pooling}; "
                     f"use_pam_encoder={use_pam_encoder}; "
                     f"focal_loss gamma={focal_gamma}; "
@@ -1029,7 +1059,7 @@ def main() -> int:
 
     if is_main_process(dist_info):
         print(
-            f"[BL5] version={config.get('version')} freeze_rnafm={freeze_rnafm} "
+            f"[BL5] version={config.get('version')} use_rnafm={use_rnafm} use_run={use_run} freeze_rnafm={freeze_rnafm} "
             f"fusion_type={fusion_type} "
             f"use_pam_encoder={use_pam_encoder} "
             f"device={device} "
@@ -1168,6 +1198,8 @@ def main() -> int:
             "device": str(device),
             "distributed": dist_info["distributed"],
             "split_mode": config.get("split_mode"),
+            "use_rnafm": use_rnafm,
+            "use_run": use_run,
             "freeze_rnafm": freeze_rnafm,
             "use_learnable_run": use_learnable_run,
             "use_pam_encoder": use_pam_encoder,
@@ -1189,8 +1221,9 @@ def main() -> int:
                 "test_predictions": str(test_predictions_path) if test_predictions_path is not None else None,
             },
             "notes": (
-                f"Fine-tuned RNA-FM + {'LearnableRunEncoder' if use_learnable_run else 'Run token CNN'} "
-                f"+ {'raw RNA-FM/Run simple concat MLP' if fusion_type == 'simple_concat' else 'Cross-Attn + Softmax Gate'}; "
+                f"{'Fine-tuned RNA-FM + ' if use_rnafm else ''}"
+                f"{'PAM Encoder' if fusion_type == 'pam_only' else 'LearnableRunEncoder' if use_learnable_run else 'Run token CNN'} "
+                f"+ {'raw RNA-FM/Run simple concat MLP' if fusion_type == 'simple_concat' else 'Cross-Attn + Softmax Gate' if fusion_type == 'cross_attn_gate' else 'PAM-Gated Fusion' if fusion_type == 'pam_gated_fusion' else 'PAM-only' if fusion_type == 'pam_only' else 'Run-only'}; "
                 f"rna_pooling={rna_pooling}; "
                 f"use_pam_encoder={use_pam_encoder}; "
                 f"focal_loss gamma={focal_gamma}; "
