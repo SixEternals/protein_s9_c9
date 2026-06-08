@@ -197,6 +197,46 @@ def formal_group_json_split(
     }
 
 
+def apply_pam_holdout_split(
+    split_indices: dict[str, np.ndarray],
+    holdout_split_dir: str | Path,
+) -> dict[str, np.ndarray]:
+    """Apply PAM holdout split masks to formal split indices.
+
+    Reads split_indices.npz produced by scripts/build_pam_strict_holdout_split.py
+    and intersects each formal split with the corresponding holdout mask.
+    """
+    holdout_dir = Path(holdout_split_dir)
+    npz_path = holdout_dir / "split_indices.npz"
+    if not npz_path.exists():
+        raise FileNotFoundError(f"Holdout split indices not found: {npz_path}")
+    npz = np.load(npz_path, allow_pickle=False)
+
+    name_map = {
+        "train": "train_H",
+        "val": "val_H",
+        "test": "test_H",
+    }
+
+    result: dict[str, np.ndarray] = {}
+    for split_name, npz_key in name_map.items():
+        if npz_key not in npz:
+            raise KeyError(f"Expected key {npz_key} in {npz_path}")
+        holdout_mask = npz[npz_key].astype(bool)
+        if len(holdout_mask) == 0:
+            raise ValueError(f"Holdout mask {npz_key} is empty")
+        holdout_indices = np.nonzero(holdout_mask)[0].astype(np.int64)
+        result[split_name] = np.intersect1d(
+            split_indices[split_name], holdout_indices, assume_unique=True
+        )
+        if len(result[split_name]) == 0:
+            raise ValueError(
+                f"Holdout split {split_name} is empty after intersecting with formal split"
+            )
+
+    return result
+
+
 def enforce_run_states_20nt(run_features: np.ndarray) -> np.ndarray:
     """Recompute C9 run-state bits inside positions 1-20 only.
 
@@ -794,6 +834,19 @@ def main() -> int:
             "group_column": data_cfg.get("group_column", "sgRNA_type") if group_labels is not None else None,
         }
 
+    # Apply PAM holdout split if configured
+    holdout_split_dir = split_cfg.get("holdout_split_dir")
+    if holdout_split_dir:
+        split_indices = apply_pam_holdout_split(split_indices, holdout_split_dir)
+        split_metadata["holdout_split_dir"] = str(holdout_split_dir)
+        # Update counts in metadata for audit
+        for name, idx in split_indices.items():
+            split_metadata.setdefault("holdout_counts", {})[name] = {
+                "samples": int(len(idx)),
+                "observed_positive": int((arrays.labels[idx] == 1).sum()),
+                "unobserved_candidate": int((arrays.labels[idx] == 0).sum()),
+            }
+
     # PAM shuffle (within-split) setup
     shuffle_pam = bool(training_cfg.get("shuffle_pam", False))
     shuffle_pam_mode = str(training_cfg.get("shuffle_pam_mode", "batch"))
@@ -1007,6 +1060,34 @@ def main() -> int:
             pos_weight=pos_weight,
             max_batches=max_eval_batches,
         )
+
+        # Export test predictions in eval-only mode too
+        test_predictions_path = None
+        probabilities = None
+        if bool(config.get("outputs", {}).get("export_test_predictions", False)):
+            probabilities = predict_probabilities(
+                model_for_train, test_loader, device, dist_info, max_batches=max_eval_batches
+            )
+            if is_main_process(dist_info):
+                probabilities = restore_sequential_distributed_order(
+                    probabilities,
+                    len(test_dataset),
+                    int(dist_info.get("world_size", 1)),
+                )
+                test_predictions_path = output_dir / "test_predictions.csv"
+                csv_path = data_cfg.get("cclmoff_csv")
+                if csv_path:
+                    write_test_predictions(
+                        csv_path,
+                        split_indices["test"],
+                        probabilities,
+                        test_predictions_path,
+                        pam_shuffle_indices=test_shuffle,
+                        split_name="test",
+                    )
+                else:
+                    test_predictions_path = None
+
         if is_main_process(dist_info):
             report_metrics(test_metrics.get("auroc"), test_metrics.get("auprc"), config.get("split_mode"))
             eval_seconds = time.time() - start_time
