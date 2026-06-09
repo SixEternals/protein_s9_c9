@@ -1,9 +1,11 @@
-# 当前优先级快照（2026-06-07）
+# 当前优先级快照（2026-06-09）
 
 > 🎯 **本文档是 `reborn_doc/` 目录下最新、最权威的项目状态入口。**
 > 所有 AI 助手（Kimi / Codex / Claude）在承接新任务前，应首先阅读本文档以了解当前优先级和进行中的工作。
 >
 > ⚠️ **禁止引用过期文档**：`reborn_doc/过期/` 路径下的所有文件均为历史归档，信息已部分或全部过时，**不可作为当前事实依据**。
+>
+> 🌿 **当前 BL5 泛化/消融分支**：`feat/bl5-generalization`。BL5 泛化/消融相关任务必须在该分支执行；BL6 相关文件不得混入本分支的 BL5 提交范围。
 >
 > 下面的旧记录保留为历史上下文；如果和本节冲突，以本节为准。
 
@@ -11,33 +13,39 @@
 
 | 事项 | 状态 | 产物 / 结论 |
 |:---|:---:|:---|
-| BL5-v4-PAM 最小组件消融矩阵 | ✅ 已完成 | RNA-FM / LearnableRun / PAM 单组件、双组件、全模型、NoPAM、PAM shuffle、BL6-1 gate variant 均已有结果。 |
-| PAM-holdout feasibility audit | ✅ 已完成 | `results/bl5_generalization/pam_holdout_feasibility/`；feasible PAM = `AGG, CGG, GAG, GGG, TGG`；AGG 是优先级 1。 |
-| External dataset feasibility audit | ✅ 已完成 | `results/bl5_generalization/external_dataset_feasibility/`；`ready_for_strict_external_eval=0`；`SITE/K562` 仅为 provenance-required limited candidates。 |
+| BL5-v4-PAM 最小组件消融矩阵 | ✅ 已完成 | RNA-FM / LearnableRun / PAM 单组件、双组件、全模型、NoPAM、PAM shuffle 均已有 formal split 结果；总结见 `reborn_doc/38_BL5_v4_PAM_组件消融总报告.md`。 |
+| PAM-holdout feasibility audit | ✅ 已完成 | `results/bl5_generalization/pam_holdout_feasibility/`；feasible PAM = `AGG, CGG, GAG, GGG, TGG`。 |
+| External dataset feasibility audit | ✅ 已完成 | `results/bl5_generalization/external_dataset_feasibility/`；`ready_for_strict_external_eval=0`；`SITE/K562` 仅为 provenance-required limited candidates，不能写成正式 external eval。 |
+| AGG strict PAM holdout | ✅ 已完成 | AGG test_H 上 NoPAM 显著优于 PAM；ΔAUPRC(NoPAM−PAM)=`+0.176219`，说明 PAM encoder 在 AGG unseen PAM 上负向。 |
+| TGG strict PAM holdout | ✅ 已完成 | TGG test_H 上 PAM 显著优于 NoPAM；ΔAUPRC(NoPAM−PAM)=`-0.052940`，说明 AGG 结论不能外推到所有 NGG PAM。 |
+| GAG strict PAM holdout | ✅ 已完成 | GAG 是唯一 feasible non-NGG exploratory subset；full test_H 上 PAM vs NoPAM 差异不显著，且存在 per-sgRNA label-composition confounding，不能作为 non-NGG 泛化强证据。 |
+| AGG/TGG/GAG paired bootstrap | ✅ 已完成 | AGG/TGG 显著且方向相反；GAG `n_bootstrap=10,000` 后 CI 跨 0。正式口径：PAM encoder 的 strict cross-PAM 行为是 motif-specific / subset-dependent。 |
 
 ## B. 当前正在进行
 
 | 优先级 | 任务 | Owner | 状态 | 验收口径 |
 |:---:|:---|:---:|:---:|:---|
-| P0 | `AGG` PAM strict holdout 成对实验 | Kimi | 🔄 进行中 | 必须同时跑 `BL5-v4-PAM-holdout-AGG` 和 `BL5-v4-NoPAM-holdout-AGG`；`train_H/val_H` 排除 `AGG`；`test_H` 只含 formal test 的 `AGG`；test 必须加载 `best.pt`；同时报告 AUROC/AUPRC、positive_ratio、observed_positive、unobserved_candidate、bootstrap CI。 |
+| P0 | BL5 泛化/消融提交分 scope push | 另一个 Kimi | 🔄 进行中 | 只提交 `feat/bl5-generalization` 上 BL5 泛化/消融相关文件；不要 `git add .`；不要混入 BL6 configs/run/report、data/reference、checkpoint、test_predictions、大型 results 产物或文档重整删除。 |
 
-当前不要改动 Kimi 正在写/跑的 AGG holdout 脚本、config、结果目录和报告，除非用户明确要求接手。需要检查结果时只读审计。
+当前不要改动提交中的 staging/push 工作，除非用户明确要求接手。需要检查结果时只读审计。
 
-## C. AGG 完成后的下一步
+## C. 下一步优先级
 
 | 优先级 | 任务 | 条件 | 说明 |
 |:---:|:---|:---|:---|
-| P1 | 审核 AGG strict holdout 结果 | Kimi 汇报完成后 | 重点查 leakage、`PAM_original = off_seq[20:23]`、best checkpoint、PAM vs NoPAM paired comparison、bootstrap CI。 |
-| P2 | `TGG` PAM strict holdout | AGG 结果无流程问题 | TGG 是第二个大体量 NGG feasible candidate，用于验证 NGG 内部 holdout 稳定性。 |
-| P3 | `GAG` PAM strict holdout | AGG/TGG 结果稳定后 | GAG 是唯一 feasible non-NGG exploratory candidate；解释时必须注明 positive_ratio 高于 overall。 |
-| P4 | SITE/K562 provenance audit | 仅作为附录 / future work | 先确认原始来源、label semantics、candidate generation，再决定是否能做有限 external eval；当前不能直接跑模型评估。 |
+| P1 | `test_seenPAM` sanity eval for AGG/TGG/GAG holdout models | BL5 泛化/消融提交不冲突时 | 不重新训练；对 6 个已训练 holdout 模型做 eval-only，评估各自 `test_seenPAM`，确认 holdout 模型在 seen-PAM formal-test subset 上是否整体正常。 |
+| P2 | `CGG` strict PAM holdout | P1 完成且解释链无流程问题 | CGG 是 feasible NGG candidate，test_H 约 46K / 186 observed_positive；用于 NGG 内部第三个 motif 复验。 |
+| P3 | `GGG` strict PAM holdout | P1 或 CGG 后 | GGG 是高支持 NGG candidate，test_H 约 203K / 716 observed_positive；训练成本更高，但可补齐 NGG 高支持证据。 |
+| P4 | SITE/K562 provenance audit / limited external check | 仅作为附录 / future work | 先确认原始来源、label semantics、candidate generation；当前不能写成 ready external benchmark。 |
 
 ## D. 当前禁止误写
 
 - **不要**把 external feasibility audit 写成 cross-dataset model evaluation。
 - **不要**把 `SITE/K562` 写成 ready external benchmark。
 - **不要**把 `test_20_samples.csv` 写成正式 external eval（仅为 smoke test）。
-- **不要**说 Cross-PAM 已完成训练；当前仅为 feasibility audit 完成，AGG strict holdout 已完成。
+- **不要**把 GAG full test_H AUPRC≈0.99 写成 non-NGG 泛化很强；GAG 有 per-sgRNA label-composition confounding，只能作为 exploratory evidence。
+- **不要**把 AGG/TGG/GAG 写成“三种模式已确认”；稳妥口径是 AGG/TGG 显著且方向相反，GAG 未检测到显著差异但有 composition confounding。
+- **不要**把 `test_seenPAM` sanity eval 写成新训练；它应是 eval-only / prediction export / metrics audit。
 - `PAM_original` 必须提取自 `off_seq[20:23]`，禁止使用 `off_seq[-3:]`。
 - `label=0` 只能写作 `unobserved_candidate`，不能写作 verified safe site。
 

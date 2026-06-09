@@ -234,6 +234,14 @@ def apply_pam_holdout_split(
                 f"Holdout split {split_name} is empty after intersecting with formal split"
             )
 
+    # Also expose test_seenPAM for sanity eval
+    if "test_seenPAM" in npz:
+        seen_mask = npz["test_seenPAM"].astype(bool)
+        seen_indices = np.nonzero(seen_mask)[0].astype(np.int64)
+        result["test_seenPAM"] = np.intersect1d(
+            split_indices["test"], seen_indices, assume_unique=True
+        )
+
     return result
 
 
@@ -767,6 +775,16 @@ def main() -> int:
         default=None,
         help="Checkpoint path for --eval-only; defaults to output_dir/checkpoints/best.pt.",
     )
+    parser.add_argument(
+        "--eval-split-key",
+        default="test",
+        help="Split key to evaluate in --eval-only mode. Default 'test' (test_H). Use 'test_seenPAM' for seen-PAM sanity eval.",
+    )
+    parser.add_argument(
+        "--no-experiment-log",
+        action="store_true",
+        help="Skip appending to results/experiments.csv. Useful for eval-only recovery runs.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -1044,6 +1062,36 @@ def main() -> int:
     start_time = time.time()
 
     if args.eval_only:
+        eval_split_key = args.eval_split_key
+        if eval_split_key != "test":
+            if eval_split_key not in split_indices:
+                raise ValueError(
+                    f"eval_split_key '{eval_split_key}' not found in split_indices. "
+                    f"Available keys: {list(split_indices.keys())}"
+                )
+            # Re-create test_dataset/test_loader for the requested split key (e.g. test_seenPAM)
+            eval_test_dataset = BL5Dataset(arrays, split_indices[eval_split_key], None)
+            if dist_info["distributed"]:
+                eval_test_sampler = SequentialDistributedSampler(eval_test_dataset, dist_info["rank"], dist_info["world_size"])
+                eval_test_loader = DataLoader(
+                    eval_test_dataset, batch_size=batch_size * 2, sampler=eval_test_sampler, shuffle=False,
+                    num_workers=num_workers, pin_memory=torch.cuda.is_available(), collate_fn=collate_fn,
+                    **dataloader_kwargs,
+                )
+            else:
+                eval_test_sampler = None
+                eval_test_loader = DataLoader(
+                    eval_test_dataset, batch_size=batch_size * 2, shuffle=False,
+                    num_workers=num_workers, pin_memory=torch.cuda.is_available(), collate_fn=collate_fn,
+                    **dataloader_kwargs,
+                )
+            eval_test_shuffle = None
+        else:
+            eval_test_dataset = test_dataset
+            eval_test_loader = test_loader
+            eval_test_sampler = test_sampler
+            eval_test_shuffle = test_shuffle
+
         ckpt_path = Path(args.checkpoint) if args.checkpoint else output_dir / "checkpoints" / "best.pt"
         check_eval_procedure(ckpt_path, checkpoint_type="best", require_exists=True)
         best_ckpt = torch.load(ckpt_path, map_location=device)
@@ -1052,7 +1100,7 @@ def main() -> int:
             model_for_train.module.load_state_dict(best_ckpt["model_state_dict"])
         test_metrics = evaluate(
             model_for_train,
-            test_loader,
+            eval_test_loader,
             device,
             dist_info,
             focal_loss=focal,
@@ -1066,24 +1114,25 @@ def main() -> int:
         probabilities = None
         if bool(config.get("outputs", {}).get("export_test_predictions", False)):
             probabilities = predict_probabilities(
-                model_for_train, test_loader, device, dist_info, max_batches=max_eval_batches
+                model_for_train, eval_test_loader, device, dist_info, max_batches=max_eval_batches
             )
             if is_main_process(dist_info):
                 probabilities = restore_sequential_distributed_order(
                     probabilities,
-                    len(test_dataset),
+                    len(eval_test_dataset),
                     int(dist_info.get("world_size", 1)),
                 )
-                test_predictions_path = output_dir / "test_predictions.csv"
                 csv_path = data_cfg.get("cclmoff_csv")
                 if csv_path:
+                    pred_filename = f"{eval_split_key}_predictions.csv"
+                    test_predictions_path = output_dir / pred_filename
                     write_test_predictions(
                         csv_path,
-                        split_indices["test"],
+                        split_indices[eval_split_key],
                         probabilities,
                         test_predictions_path,
-                        pam_shuffle_indices=test_shuffle,
-                        split_name="test",
+                        pam_shuffle_indices=eval_test_shuffle,
+                        split_name=eval_split_key,
                     )
                 else:
                     test_predictions_path = None
@@ -1095,6 +1144,16 @@ def main() -> int:
             if torch.cuda.is_available():
                 gpu_mem = f"{torch.cuda.max_memory_allocated(device) / (1024 ** 3):.2f}GB"
             best_metrics = best_ckpt.get("metrics", {})
+
+            # Compute label stats for the evaluated split
+            if eval_split_key in split_indices:
+                eval_labels = arrays.labels[split_indices[eval_split_key]]
+            else:
+                eval_labels = arrays.labels[split_indices["test"]]
+            n_observed_positive = int(eval_labels.sum())
+            n_unobserved_candidate = int((eval_labels == 0).sum())
+            n_samples = int(len(eval_labels))
+
             summary = {
                 "version": config.get("version", "BL5-3"),
                 "status": "completed_eval_only",
@@ -1118,6 +1177,11 @@ def main() -> int:
                 "best_metric_name": monitor,
                 "best_metric_value": float(best_metrics.get(monitor, float("nan"))),
                 "test_metrics": test_metrics,
+                "eval_split_key": eval_split_key,
+                "n_samples": n_samples,
+                "observed_positive": n_observed_positive,
+                "unobserved_candidate": n_unobserved_candidate,
+                "prediction_csv": str(test_predictions_path) if test_predictions_path else None,
                 "notes": (
                     f"Eval-only recovery from best.pt after interrupted run; "
                     f"{'Fine-tuned RNA-FM + ' if use_rnafm else ''}"
@@ -1131,10 +1195,46 @@ def main() -> int:
                     "best.pt test evaluation"
                 ),
             }
-            (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-            write_report(output_dir, summary, args.config)
-            if config.get("logging", {}).get("append_experiment", True):
-                append_experiment(Path("results/experiments.csv"), summary, args.config)
+
+            if eval_split_key != "test":
+                # Non-default split: write to isolated files, never overwrite main summary/report
+                summary_path = output_dir / f"summary_{eval_split_key}.json"
+                report_path = output_dir / f"report_{eval_split_key}.md"
+                summary["notes"] = (
+                    f"Eval-only {eval_split_key} sanity check from best.pt; "
+                    f"n_samples={n_samples}, observed_positive={n_observed_positive}, unobserved_candidate={n_unobserved_candidate}; "
+                    f"AUROC={test_metrics.get('auroc', float('nan')):.6f}, AUPRC={test_metrics.get('auprc', float('nan')):.6f}; "
+                    + summary["notes"].split("; ", 1)[1]
+                )
+                summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+                metrics = summary["test_metrics"]
+                report_lines = [
+                    f"# {summary['version']} {eval_split_key} Sanity Report",
+                    "",
+                    f"- Status: {summary['status']}",
+                    f"- Config: `{args.config}`",
+                    f"- Split mode: `{summary['split_mode']}`",
+                    f"- Eval split key: `{eval_split_key}`",
+                    f"- Checkpoint: `best.pt` (epoch {summary['best_epoch']})",
+                    f"- AUROC: {metrics.get('auroc', float('nan')):.6f}",
+                    f"- AUPRC: {metrics.get('auprc', float('nan')):.6f}",
+                    f"- n_samples: {n_samples}",
+                    f"- observed_positive: {n_observed_positive}",
+                    f"- unobserved_candidate: {n_unobserved_candidate}",
+                    f"- Prediction CSV: `{summary.get('prediction_csv', 'N/A')}`",
+                    f"- Eval seconds: {eval_seconds:.1f}",
+                    f"- Device: `{summary['device']}`",
+                    "",
+                    summary["notes"],
+                ]
+                report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+                # Do NOT append to experiments.csv for non-test eval splits
+            else:
+                # Default test split: overwrite main summary/report as before
+                (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+                write_report(output_dir, summary, args.config)
+                if not args.no_experiment_log and config.get("logging", {}).get("append_experiment", True):
+                    append_experiment(Path("results/experiments.csv"), summary, args.config)
         cleanup_distributed(dist_info["distributed"])
         return 0
 
