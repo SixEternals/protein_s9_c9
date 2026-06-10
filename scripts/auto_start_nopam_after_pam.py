@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """
+AGENTS.md compliance: [use_rnafm=N/A, freeze_rnafm=N/A,
+                       split_mode=N/A, pos_weight=N/A]
+确认本文件遵守 AGENTS.md 约束（本脚本为训练辅助工具，不直接处理模型配置，
+PAM/NoPAM 的 RNA-FM 与 split 合规性由 train_bl5.py 中的 guardrails 检查保证）
+
 Auto-start NoPAM training after PAM training completes.
 Runs as a cron job or standalone check.
 """

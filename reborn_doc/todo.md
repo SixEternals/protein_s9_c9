@@ -13,30 +13,32 @@
 
 | 事项 | 状态 | 产物 / 结论 |
 |:---|:---:|:---|
-| BL5-v4-PAM 最小组件消融矩阵 | ✅ 已完成 | RNA-FM / LearnableRun / PAM 单组件、双组件、全模型、NoPAM、PAM shuffle 均已有 formal split 结果；总结见 `reborn_doc/38_BL5_v4_PAM_组件消融总报告.md`。 |
+| BL5-v4-PAM 最小组件消融矩阵 | ✅ 已完成 | RNA-FM / LearnableRun / PAM 单组件、双组件、全模型、NoPAM、PAM shuffle 均已有 formal split 结果；总结见 `reborn_doc/bl5_addOn/38_BL5_v4_PAM_组件消融总报告.md` 和 `reborn_doc/42_BL5_消融泛化全景总结.md`。 |
 | PAM-holdout feasibility audit | ✅ 已完成 | `results/bl5_generalization/pam_holdout_feasibility/`；feasible PAM = `AGG, CGG, GAG, GGG, TGG`。 |
 | External dataset feasibility audit | ✅ 已完成 | `results/bl5_generalization/external_dataset_feasibility/`；`ready_for_strict_external_eval=0`；`SITE/K562` 仅为 provenance-required limited candidates，不能写成正式 external eval。 |
 | AGG strict PAM holdout | ✅ 已完成 | AGG test_H 上 NoPAM 显著优于 PAM；ΔAUPRC(NoPAM−PAM)=`+0.176219`，说明 PAM encoder 在 AGG unseen PAM 上负向。 |
 | TGG strict PAM holdout | ✅ 已完成 | TGG test_H 上 PAM 显著优于 NoPAM；ΔAUPRC(NoPAM−PAM)=`-0.052940`，说明 AGG 结论不能外推到所有 NGG PAM。 |
 | GAG strict PAM holdout | ✅ 已完成 | GAG 是唯一 feasible non-NGG exploratory subset；full test_H 上 PAM vs NoPAM 差异不显著，且存在 per-sgRNA label-composition confounding，不能作为 non-NGG 泛化强证据。 |
+| CGG strict PAM holdout + P2 bootstrap | ✅ 已完成 | CGG test_H 上 PAM 显著优于 NoPAM；ΔAUPRC=−0.162350，95% CI [−0.202704, −0.122637]，CI 不跨 0。与 AGG/TGG/GAG 共同支持 motif-specific 口径。 |
 | AGG/TGG/GAG paired bootstrap | ✅ 已完成 | AGG/TGG 显著且方向相反；GAG `n_bootstrap=10,000` 后 CI 跨 0。正式口径：PAM encoder 的 strict cross-PAM 行为是 motif-specific / subset-dependent。 |
+| **AGG/TGG/GAG/CGG 四 motif 横向总结（P3）** | ✅ 已完成 | 四 motif test_H 总表 + seenPAM sanity 总表 + 技术报告 + 总监简报。结论：motif-specific / subset-dependent；AGG NoPAM>PAM、TGG/CGG PAM>NoPAM、GAG CI 跨 0 exploratory。产物：`results/bl5_generalization/pam_strict_holdout/four_motif_*.csv` / `*.md`，执行报告：`reborn_doc/bl5_addOn/24_BL5_v4_PAM_Strict_Holdout_AGG_TGG_GAG_CGG_横向总结.md`。 |
 
 ## B. 当前正在进行
 
 | 优先级 | 任务 | Owner | 状态 | 验收口径 |
 |:---:|:---|:---:|:---:|:---|
-| P0 | BL5 泛化/消融提交分 scope push | 另一个 Kimi | 🔄 进行中 | 只提交 `feat/bl5-generalization` 上 BL5 泛化/消融相关文件；不要 `git add .`；不要混入 BL6 configs/run/report、data/reference、checkpoint、test_predictions、大型 results 产物或文档重整删除。 |
-
-当前不要改动提交中的 staging/push 工作，除非用户明确要求接手。需要检查结果时只读审计。
+| P0 | BL5 消融/泛化文档重整 | Codex | ✅ 已完成 | 13 份 BL5 详细报告移入 `reborn_doc/bl5_addOn/`；撰写 `reborn_doc/42_BL5_消融泛化全景总结.md`；同步更新导航文档、todo.md、大纲。 |
 
 ## C. 下一步优先级
 
 | 优先级 | 任务 | 条件 | 说明 |
 |:---:|:---|:---|:---|
-| P1 | `test_seenPAM` sanity eval for AGG/TGG/GAG holdout models | BL5 泛化/消融提交不冲突时 | 不重新训练；对 6 个已训练 holdout 模型做 eval-only，评估各自 `test_seenPAM`，确认 holdout 模型在 seen-PAM formal-test subset 上是否整体正常。 |
-| P2 | `CGG` strict PAM holdout | P1 完成且解释链无流程问题 | CGG 是 feasible NGG candidate，test_H 约 46K / 186 observed_positive；用于 NGG 内部第三个 motif 复验。 |
-| P3 | `GGG` strict PAM holdout | P1 或 CGG 后 | GGG 是高支持 NGG candidate，test_H 约 203K / 716 observed_positive；训练成本更高，但可补齐 NGG 高支持证据。 |
-| P4 | SITE/K562 provenance audit / limited external check | 仅作为附录 / future work | 先确认原始来源、label semantics、candidate generation；当前不能写成 ready external benchmark。 |
+| P1 | BL5 P1-P3 归档 / 提交范围清理 / tag 准备 | BL5 封口 | 整理 P1-P3 产物，清理提交范围，准备打 tag。 |
+| P2 | BL6-1 gate audit + report correction | BL5 封口后 | eval-only export gate weights；修正 experiments.csv / report.md 中 "Cross-Attn + Softmax Gate" 模板错误。 |
+| P3 | `GGG` strict PAM holdout（optional appendix） | 条件允许时 | GGG 是高支持 NGG candidate，test_H 约 203K / 716 observed_positive；训练成本更高，可补齐 NGG 高支持证据，但不是 BL5 封口前必做。 |
+| P4 | BL6-1 seed repeat + paired bootstrap vs BL5-v4-PAM | BL5 封口后 | 当前 BL6-1 是 single-run 0.5399，需 multi-seed 验证稳定性。 |
+| P5 | per-sgRNA generalization report | 后续可选 | BL5-v4-PAM 的提升是否在 72 个 unseen sgRNA 上普遍存在，而不是少数 sgRNA 驱动。 |
+| P6 | SITE/K562 provenance audit / limited external check | 仅作为附录 / future work | 先确认原始来源、label semantics、candidate generation；当前不能写成 ready external benchmark。 |
 
 ## D. 当前禁止误写
 
@@ -183,14 +185,14 @@ bl4 bl5需要补什么
    ├─────────────────┼────────┼────────────────────────────────────────────────────────┤
    │ Cross-dataset   │ ❌     │ 只在 CCLMoff 一个数据集上训练和测试                    │
    ├─────────────────┼────────┼────────────────────────────────────────────────────────┤
-   │ Cross-PAM       │ ❌     │ 未做 PAM-holdout（test 有 14.1% non-NGG，但非严格 PAM 泛化） │
+   │ Cross-PAM       │ ✅     │ AGG/TGG/GAG strict PAM-holdout 已完成；AGG 负迁移，TGG 正向，GAG 不显著且有 composition confounding │
    ├─────────────────┼────────┼────────────────────────────────────────────────────────┤
    │ Cross-cell-line │ ❌     │ 没有验证其他细胞系                                     │
    ├─────────────────┼────────┼────────────────────────────────────────────────────────┤
    │ Cross-species   │ ❌     │ 没有验证其他物种                                       │
    └─────────────────┴────────┴────────────────────────────────────────────────────────┘
 
-   → 我们做了 sgRNA-level 的泛化，但没有做数据集级、PAM 级、细胞系级的泛化。
+   → 我们做了 sgRNA-level 和 strict PAM-level（AGG/TGG/GAG）的泛化，但数据集级、细胞系级、物种级仍待补。
 
    ────────────────────────────────────────────────────────────────────────────────
 
@@ -198,7 +200,7 @@ bl4 bl5需要补什么
 
    ```
      消融：✅ BL5-v4-PAM 组件消融矩阵已完整（7 消融 + 1 shuffle control + 1 gate）。
-     泛化：只做了 sgRNA-safe 的，没做跨数据集/跨 PAM/跨条件的泛化。
+     泛化：sgRNA-safe ✅；strict PAM-holdout（AGG/TGG/GAG）✅；跨数据集/细胞系/物种仍待补。
    ```
 
 ---
@@ -298,7 +300,7 @@ BL5-v4-PAM 的最小组件消融矩阵已经完成。各组件单独及组合的
 |:---|:---:|:---|:---|
 | Same-dataset held-out test | ✅ | formal BL5 test set 有 954,326 个候选位点，3,057 个 observed_positive。 | 继续所有模型都保持同一 test set。 |
 | Unseen sgRNA | ✅ | `sgrna_safe` / formal split 按 `sgRNA_type` 分组，test 有 72 个训练阶段未见过的 sgRNA_type。 | 补 per-sgRNA report，看提升是否普遍。 |
-| Cross-PAM strict holdout | 🔄 | PAM motif feasibility audit 已完成；AGG strict holdout 成对训练/评估正在由 Kimi 推进。 | 当前优先审核 `AGG`：`BL5-v4-PAM-holdout-AGG` vs `BL5-v4-NoPAM-holdout-AGG`。 |
+| Cross-PAM strict holdout | ✅ | AGG/TGG/GAG strict holdout 已完成。AGG：PAM encoder 负迁移（NoPAM > PAM）；TGG：PAM encoder 正向（PAM > NoPAM）；GAG：差异不显著，有 per-sgRNA label-composition confounding。正式口径：PAM encoder 的 cross-PAM 行为是 motif-specific。 | 如需进一步证据，候选 CGG / GGG。 |
 | NGG / non-NGG stratified evaluation | ✅ | canonical PAM 统计：NGG-only = 819,984；non-NGG = 134,342，non-NGG 约 14.08%，不能写“几乎没有”。 | 报告中明确 PAM 口径为 positions 21-23 / `PAM_original`。 |
 | Cross-dataset | ⚠️ | External dataset feasibility audit 已完成：仓库内 `ready_for_strict_external_eval=0`；`SITE/K562` 仅是 provenance-required limited candidates。 | 不直接跑 external eval；如需推进，先做 SITE/K562 provenance audit。 |
 | Cross-cell-line | ❌ | CCLMoff `Method` / `Length` 大量为空，细胞系/检测方法元数据不足。 | 只有找到可靠 metadata mapping 后再做。 |
@@ -317,7 +319,7 @@ BL5-v4-PAM 的最小组件消融矩阵已经完成。各组件单独及组合的
 | `top-k operating point table` | 实际筛选时 top-ranked 位点能找回多少 observed_positive。 | ❌ | ⚠️ 部分已有，需统一 | 高 | `results/bl5_generalization/topk_operating_points.csv` / `.md` | 报 Top-100、Top-500、Top-1000、Top-2000、Top-3057、Top-1%、Top-5%、Top-10%；建议同时做 global top-k 和 per-sgRNA macro top-k。 |
 | `paired probability delta by subset` | 正确 PAM 是否主要提高 observed_positive 概率，而不是同时抬高大量 unobserved_candidate。 | ❌ | ⚠️ shuffle 已有部分，需扩展 | 中高 | `results/bl5_generalization/paired_delta_by_subset.csv` / `.md` | 分 all、observed_positive、unobserved_candidate、NGG-only、non-NGG、per-sgRNA；重点看 `prob_pam - prob_nopam` 和 `prob_pam - prob_shuffle`。 |
 | `PAM-holdout feasibility audit` | 当前 CCLMoff 是否适合做严格 cross-PAM generalization。 | ❌ | ✅ 已完成 | 已封口 | `results/bl5_generalization/pam_holdout_feasibility/` | Feasible: `AGG, CGG, GAG, GGG, TGG`；marginal: `AAG, ATG, CAG, GTG, TAG, TTG`；noncanonical / low-support motifs 不推荐。 |
-| `strict PAM-holdout training` | 训练不见某 PAM、测试只看该 PAM 的严格跨 PAM 泛化。 | ✅ | 🔄 AGG 进行中 | 最高 | `results/bl5_generalization/pam_strict_holdout/AGG/` | AGG 是优先级 1，必须成对跑 PAM vs NoPAM；后续候选为 TGG、GAG。 |
+| `strict PAM-holdout training` | 训练不见某 PAM、测试只看该 PAM 的严格跨 PAM 泛化。 | ✅ | ✅ 已完成 | 已封口 | `results/bl5_generalization/pam_strict_holdout/AGG/` `.../TGG/` `.../GAG/` | AGG/TGG/GAG 均已完成。AGG 负迁移，TGG 正向，GAG 不显著。如需扩展，候选 CGG / GGG。
 | `selected sgRNA LOO` | 比 formal sgRNA-safe 更严格的 leave-one-sgRNA-out 泛化。 | ✅ | ❌ 暂不建议全量 | 低/条件触发 | `results/bl5_generalization/selected_loo/` | 不建议全量 LOO；如老师强要求，可选 5-10 个 positive 足够多的 sgRNA 做小规模 LOO。 |
 | `external dataset feasibility audit` | 是否能做 cross-dataset generalization。 | ❌ | ✅ 已完成 | 已封口 | `results/bl5_generalization/external_dataset_feasibility/` | 结论：无 ready strict external benchmark；`SITE/K562` 需 provenance audit 后才可能作为有限候选；GUIDE-seq / CHANGE-seq / Tasi overlap 过高。 |
 | `cross-cell-line / cross-species validation` | 是否能跨细胞系或跨物种泛化。 | ✅ | ❌ future work | 低 | 暂无 | 当前 CCLMoff `Method` / `Length` 大量为空，细胞系/物种元数据不足；除非找到可靠外部数据，否则写作 limitation/future work。 |
