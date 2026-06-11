@@ -42,6 +42,9 @@ AGENTS.md compliance: [use_rnafm=True, freeze_rnafm=False,
 11. 🔴 **禁止未经用户确认执行 `git commit` 或 `git push`**。
 12. 🔴 **禁止删除或覆盖用户数据**：不得删除 `data/`、`results/`、`reference/` 下的数据，即使它们被 `.gitignore` 忽略。
 13. 🔴 **多 AI 并行时禁止改动他人正在运行的 BL 文件**：例如用户说明 Kimi 正在跑 BL3A / BL3B 时，不得修改相关代码、配置、结果或运行脚本。
+14. 🔴 **提交/推送前必须读取并执行 Git skill**：任何 AI 在准备 `git add` / `git commit` / `git push` / tag 前，必须先读取 `skills/git-commit-push-guardrails/SKILL.md`，按 scoped staging 流程执行；禁止 `git add .`、`git add -A`、通配符批量 staging，禁止把无关未跟踪文件、大型 prediction/checkpoint、ignored results 混入提交。
+15. 🔴 **总监/决策角色 AI 必须把约束写入下发提示词**：任何 AI 以总监、决策者、审阅者、协调者、提示词作者身份给 Kimi / Claude / Codex 分派任务时，必须在提示词中强制要求对方遵守 `AGENTS.md` 和相关 skill；不得下发省略 scoped Git、文件范围、禁止项、验证项或合规声明的模糊提示词。
+16. 🔴 **禁止上传 `reborn_doc/` 下任何内容**：`reborn_doc/` 只可作为本地项目事实依据读取，不得 `git add` / `git commit` / `git push` 其中任何文件或子目录；包括 `.md`、`.docx`、图片、执行记录、报告和历史文档。任何 `reborn_doc/**` 变更都必须列为 out-of-scope，留在本地工作区。
 
 ---
 
@@ -234,6 +237,8 @@ AUPRC
 
 ## 12. Git 管理铁律
 
+> 🔴 **强制前置 skill**：任何提交、推送、tag、提交范围审查、或给其他 AI 写 commit/push 提示词前，必须先读取并遵守 `skills/git-commit-push-guardrails/SKILL.md`。该 skill 是本节的执行细则，优先级等同 AGENTS.md。
+
 ### 绝对禁止
 
 1. 禁止复制文件夹做版本管理。所有 BL 差异必须通过 Git 分支和 YAML config 管理。
@@ -243,6 +248,10 @@ AUPRC
    - `git rebase`
    - `git clean -f`
 3. 禁止在未经用户确认的情况下执行 `git commit` 或 `git push`。
+4. 禁止使用 `git add .`、`git add -A`、`git add --all` 或通配符批量 staging；必须逐文件、逐 scope staging。
+5. 禁止把 out-of-scope 未跟踪文件、其他 AI 的工作、docx/图片/日志/临时文件混入当前任务提交。
+6. 禁止 force-add ignored 的大型结果文件，尤其是 `*.pt` / `*.ckpt` / `test_predictions.csv` / `gate_predictions.csv` / checkpoint 目录，除非用户明确逐路径确认。
+7. 禁止提交或推送 `reborn_doc/` 下任何内容；该目录是本地项目知识库，不属于可上传范围。
 
 ### 强制要求
 
@@ -255,6 +264,9 @@ AUPRC
 
 3. 实验结果必须记录到 `results/experiments.csv`。
 4. 删除或移动文件前，先确认该文件是否被 Git 追踪。
+5. 提交前必须输出 scoped commit plan：in-scope 文件、out-of-scope 文件、ignored/large artifacts、验证命令、计划 commit message。
+6. 每次 staging 后必须检查 `git diff --cached --name-only` 和 `git diff --cached --stat`，确认 staged 文件与计划完全一致。
+7. push 后必须回报 commit hash、branch、push 结果、`git status --short --branch`，以及未提交的 out-of-scope 文件。
 
 ---
 
@@ -279,10 +291,28 @@ AUPRC
 3. 运行 `git status --short`，识别他人未提交工作。
 4. 运行 `python scripts/audit_compliance.py`。
 5. 确认理解所有 🔴 约束。
-6. 在模型代码中调用 `check_model_config(config)`。
-7. 在 Run 编码代码中调用或测试 `check_run_encoding_positions(...)`。
-8. 在 test 评估代码中调用 `check_eval_procedure(path, "best")`。
-9. 在指标输出处使用 `report_metrics(auroc, auprc, split_mode)` 或等价逻辑。
+6. 如果任务涉及提交、推送、tag、提交范围审查或给其他 AI 写 commit/push 指令，必须读取 `skills/git-commit-push-guardrails/SKILL.md` 并在回报中声明已遵守。
+7. 在模型代码中调用 `check_model_config(config)`。
+8. 在 Run 编码代码中调用或测试 `check_run_encoding_positions(...)`。
+9. 在 test 评估代码中调用 `check_eval_procedure(path, "best")`。
+10. 在指标输出处使用 `report_metrics(auroc, auprc, split_mode)` 或等价逻辑。
+
+### 14.1 决策/总监 AI 下发提示词责任
+
+任何 AI 只要承担总监、决策者、审阅者、协调者、任务拆解者或提示词作者角色，就必须把本文件约束传递给实际执行的下游 AI。该责任适用于给 Kimi / Claude / Codex 写任何编码、训练、评估、文档、提交、推送、tag、审查或清理任务提示词。
+
+下发给手下 AI 的提示词必须显式包含：
+
+1. 必读文件：`AGENTS.md`、`reborn_doc/1. 大纲拟定.md`、本任务相关报告/执行记录；如果任务涉及提交、推送、tag、提交范围审查或 commit/push 指令，必须额外读取 `skills/git-commit-push-guardrails/SKILL.md`。注意：`reborn_doc/` 只能读取，不能上传。
+2. 当前任务 scope：允许修改的精确文件/目录、禁止触碰的文件/目录、是否允许训练、是否允许 eval-only inference、是否允许写 `results/experiments.csv`、是否允许 commit/push；任何 `reborn_doc/**` 必须明确列为禁止 staging/commit/push。
+3. Git 硬约束：禁止 `git add .`、`git add -A`、`git add --all`、通配符批量 staging；禁止混入 out-of-scope 未跟踪文件；禁止 force-add 大型 ignored artifacts、checkpoint、`test_predictions.csv`、`gate_predictions.csv`，除非用户逐路径明确确认。
+4. 数据和结果保护：禁止删除、覆盖或移动 `data/`、`reference/`、`results/` 下既有文件；禁止覆盖 prediction CSV、summary/report、checkpoint，除非任务明确要求且用户确认。
+5. 验证要求：必须说明需要运行的检查，例如 `git status --short --branch`、`python scripts/audit_compliance.py`、`py_compile`、`bash -n`、stale wording `rg`、输入/输出 schema 校验。
+6. 回报格式：必须要求下游 AI 汇报修改文件、生成 artifacts、关键指标、验证命令结果、git status、未提交 out-of-scope 文件、合规声明，以及是否执行过训练/eval/commit/push。
+
+如果总监/决策 AI 准备的是 commit/push 提示词，还必须要求下游 AI 先给出 scoped commit plan，列出 in-scope / out-of-scope / ignored artifacts / large files，并在 staging 后用 `git diff --cached --name-only`、`git diff --cached --stat`、`git diff --cached` 核对。没有用户对精确 scope 和 commit/push 动作的明确授权，下游 AI 必须停止在审查阶段，不得自行提交或推送。
+
+如果下游 AI 收到的提示词没有包含以上约束，应先暂停并要求补充 scoped prompt；不得根据含糊的“提交一下”“直接 push”“清理一下”自行扩大权限。
 
 ---
 
@@ -293,6 +323,7 @@ AUPRC
 | `reborn_doc/1. 大纲拟定.md` | 项目总纲、执行计划、检查清单 |
 | `configs/*.yaml` | 各 BL 版本配置 |
 | `results/experiments.csv` | 实验记录，必须随 tag 同步更新 |
+| `skills/git-commit-push-guardrails/SKILL.md` | 提交/推送前强制读取的 scoped Git workflow |
 | `utils/guardrails.py` | 代码级强制约束检查 |
 | `scripts/audit_compliance.py` | 自动合规审计 |
 | `scripts/check_before_commit.py` | 提交前检查入口 |
